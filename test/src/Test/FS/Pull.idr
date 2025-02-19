@@ -2,6 +2,7 @@ module Test.FS.Pull
 
 import Control.Monad.Elin
 import Data.List
+import Data.Maybe
 import Data.SnocList
 import FS.Internal.Chunk
 import FS.Pull
@@ -168,6 +169,131 @@ prop_replicateChunks =
     [cs,n,v] <- forAll $ hlist [chunkSizes, smallNats, bytes]
     chunks (replicate @{cs} n v) === chunkedCS cs (replicate n v)
 
+prop_fromChunks : Property
+prop_fromChunks =
+  property $ do
+    vss <- forAll byteChunks
+    chunks (fromChunks vss) === filter (not . null) vss
+
+prop_cons : Property
+prop_cons =
+  property $ do
+    [vs,vss] <- forAll $ hlist [byteLists, byteChunks]
+    chunks (cons vs $ fromChunks vss) === filter (not . null) (vs::vss)
+
+prop_uncons : Property
+prop_uncons =
+  property $ do
+    vss <- forAll byteChunks
+    chunks (uncons (fromChunks vss) >>= headOut) === firstNotNull vss
+
+prop_unconsrem : Property
+prop_unconsrem =
+  property $ do
+    vss <- forAll byteChunks
+    chunks (uncons (fromChunks vss) >>= tailOut) ===
+      drop 1 (filter (not . null) vss)
+
+prop_uncons1 : Property
+prop_uncons1 =
+  property $ do
+    vss <- forAll byteChunks
+    let res := runPull (uncons1 (fromChunks vss) >>= headOut1)
+    case filter (not . null) vss of
+      (h::_)::_ => res === [h]
+      _         => res === []
+
+prop_unconsLimit : Property
+prop_unconsLimit =
+  property $ do
+    [CS n, vss] <- forAll $ hlist [chunkSizes, byteChunks]
+    let res := chunks (unconsLimit n (fromChunks vss) >>= headOut)
+    case filter (not . null) vss of
+      h::_ => res === [take n h]
+      _    => res === []
+
+prop_unconsMinFalse : Property
+prop_unconsMinFalse =
+  property $ do
+    [CS n, vss] <- forAll $ hlist [chunkSizes, byteChunks]
+    let res := runPull (unconsMin n False (fromChunks vss) >>= headOut)
+        all := concat vss
+    case length all >= n of
+      True  => assert (isPrefixOf res all && length res >= n)
+      False => res === []
+
+prop_unconsMinTrue : Property
+prop_unconsMinTrue =
+  property $ do
+    [CS n, vss] <- forAll $ hlist [chunkSizes, byteChunks]
+    let res := runPull (unconsMin n True (fromChunks vss) >>= headOut)
+        all := concat vss
+    case length all >= n of
+      True  => assert (isPrefixOf res all && length res >= n)
+      False => res === all
+
+prop_unconsNFalse : Property
+prop_unconsNFalse =
+  property $ do
+    [CS n, vss] <- forAll $ hlist [chunkSizes, byteChunks]
+    let res := runPull (unconsN n False (fromChunks vss) >>= headOut)
+        all := concat vss
+    case length all >= n of
+      True  => assert (isPrefixOf res all && length res == n)
+      False => res === []
+
+prop_unconsNTrue : Property
+prop_unconsNTrue =
+  property $ do
+    [CS n, vss] <- forAll $ hlist [chunkSizes, byteChunks]
+    let res := runPull (unconsN n True (fromChunks vss) >>= headOut)
+        all := concat vss
+    case length all >= n of
+      True  => assert (isPrefixOf res all && length res == n)
+      False => res === all
+
+prop_take : Property
+prop_take =
+  property $ do
+    [n, vss] <- forAll $ hlist [smallNats, byteChunks]
+    runPull (ignore $ take n (fromChunks vss)) === take n (join vss)
+
+prop_takerem : Property
+prop_takerem =
+  property $ do
+    [n, vss] <- forAll $ hlist [smallNats, byteChunks]
+    runPull (take n (fromChunks vss) >>= fromMaybe (pure ())) === join vss
+
+prop_last : Property
+prop_last =
+  property $ do
+    vss <- forAll byteChunks
+    runPull (last (fromChunks vss) >>= traverse_ output1) === lastl (join vss)
+
+prop_peek : Property
+prop_peek =
+  property $ do
+    vss <- forAll byteChunks
+    chunks (peek (fromChunks vss) >>= headOut) === firstNotNull vss
+
+prop_peekrem : Property
+prop_peekrem =
+  property $ do
+    vss <- forAll byteChunks
+    chunks (peek (fromChunks vss) >>= tailOut) === filter (not . null) vss
+
+prop_peek1 : Property
+prop_peek1 =
+  property $ do
+    vss <- forAll byteChunks
+    chunks (peek1 (fromChunks vss) >>= headOut1) === firstl vss
+
+prop_peek1rem : Property
+prop_peek1rem =
+  property $ do
+    vss <- forAll byteChunks
+    chunks (peek1 (fromChunks vss) >>= tailOut) === filter (not . null) vss
+
 export
 props : Group
 props =
@@ -189,4 +315,21 @@ props =
     , ("prop_iterateChunks", prop_iterateChunks)
     , ("prop_replicate", prop_replicate)
     , ("prop_replicateChunks", prop_replicateChunks)
+    , ("prop_fromChunks", prop_fromChunks)
+    , ("prop_cons", prop_cons)
+    , ("prop_uncons", prop_uncons)
+    , ("prop_unconsrem", prop_unconsrem)
+    , ("prop_uncons1", prop_uncons1)
+    , ("prop_unconsLimit", prop_unconsLimit)
+    , ("prop_unconsMinFalse", prop_unconsMinFalse)
+    , ("prop_unconsMinTrue", prop_unconsMinTrue)
+    , ("prop_unconsNFalse", prop_unconsNFalse)
+    , ("prop_unconsNTrue", prop_unconsNTrue)
+    , ("prop_take", prop_take)
+    , ("prop_takerem", prop_takerem)
+    , ("prop_last", prop_last)
+    , ("prop_peek", prop_peek)
+    , ("prop_peekrem", prop_peekrem)
+    , ("prop_peek1", prop_peek1)
+    , ("prop_peek1rem", prop_peek1rem)
     ]

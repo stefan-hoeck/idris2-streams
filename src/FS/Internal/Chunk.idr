@@ -47,9 +47,9 @@ splitAtImpl sv vs      _     = (sv <>> [], vs)
 
 ||| Used for implementing `FS.Pull.take`
 export
-takeImpl : SnocList o -> Nat -> List o -> (Nat, List o)
+takeImpl : SnocList o -> Nat -> List o -> (Nat, List o, List o)
 takeImpl sx (S k) (x :: xs) = takeImpl (sx :< x) k xs
-takeImpl sx k     _         = (k, sx <>> [])
+takeImpl sx k     xs        = (k, sx <>> [], xs)
 
 ||| Used for implementing `FS.Pull.drop`
 export
