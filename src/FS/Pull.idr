@@ -233,6 +233,15 @@ unfoldChunkMaybe init g =
         Nothing => output os
         Just s2 => assert_total $ output os >> unfoldChunkMaybe s2 g
 
+||| Generates a stream from the given list of chunks. Empty chunks
+||| will be silently dropped.
+export
+fromChunks : List (List o) -> Pull f o es ()
+fromChunks vss =
+  unfoldChunkMaybe vss $ \case
+    []   => ([], Nothing)
+    h::t => (h, Just t)
+
 ||| Like `unfold` but does not produce an interesting result.
 export %inline
 unfoldMaybe : ChunkSize => (init : s) -> (s -> Maybe (o,s)) -> Pull f o es ()
