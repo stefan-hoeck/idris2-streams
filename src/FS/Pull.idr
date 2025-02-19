@@ -417,9 +417,9 @@ take 0 p = pure (Just p)
 take k p =
   assert_total $ uncons p >>= \case
     Left _      => pure Nothing
-    Right (o,p) =>
-      let (k2,o2) := takeImpl [<] k o
-       in cons o2 (take k2 p)
+    Right (o,q) =>
+      let (k2,o2,rem) := takeImpl [<] k o
+       in cons o2 (take k2 $ cons rem q)
 
 ||| Returns the last value emitted by a pull
 export
