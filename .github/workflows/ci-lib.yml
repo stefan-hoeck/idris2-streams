@@ -27,8 +27,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-      - name: Install dependencies
-        run: |
-          apt-get update
       - name: Build lib
-        run: pack --no-prompt install streams
+        run: pack install streams
+      - name: Test lib
+        run: pack test streams

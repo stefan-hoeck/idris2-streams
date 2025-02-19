@@ -1,0 +1,13 @@
+package streams-test
+
+authors    = "stefan-hoeck"
+version    = 0.1.0
+depends = base >= 0.7.0
+        , streams
+        , hedgehog
+
+sourcedir = "src"
+
+main = Main
+
+executable = "streams-test"
