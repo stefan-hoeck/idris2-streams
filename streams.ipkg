@@ -8,6 +8,7 @@ depends    = base         >= 0.7.0
            , elin
            , async
 
-modules = FS.Pull
+modules = FS.Internal.Chunk
+        , FS.Pull
         , FS.Scope
         , FS.Stream
