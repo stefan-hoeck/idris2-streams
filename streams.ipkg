@@ -2,11 +2,10 @@ package streams
 
 authors    = "stefan-hoeck"
 brief      = "Functional, effectful streaming with resource management"
-version    = 0.7.0
+version    = 0.1.0
 sourcedir  = "src"
 depends    = base         >= 0.7.0
            , elin
-           , async
 
 modules = FS.Internal.Chunk
         , FS.Pull
