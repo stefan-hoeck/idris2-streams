@@ -260,8 +260,6 @@ repeat : Pull f o es () -> Pull f o es ()
 repeat v = assert_total $ v >> repeat v
 
 ||| Infinitely produces chunks of values of the given size
-|||
-||| This can be much more performant downstream.
 export
 fill : ChunkSize => o -> Pull f o es ()
 fill @{CS n} v = let vs := replicate n v in repeat (output vs)

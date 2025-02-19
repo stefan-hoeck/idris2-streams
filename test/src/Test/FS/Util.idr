@@ -1,5 +1,6 @@
 module Test.FS.Util
 
+import FS.Internal.Chunk
 import FS.Pull
 import public Hedgehog
 
@@ -32,3 +33,7 @@ posNats = nat (linear 1 20)
 export
 chunkSizes : Gen ChunkSize
 chunkSizes = (\n => CS (S n)) <$> smallNats
+
+export %inline
+chunkedCS : ChunkSize -> List a -> List (List a)
+chunkedCS (CS sz) = chunked sz
