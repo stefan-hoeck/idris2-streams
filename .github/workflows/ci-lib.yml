@@ -31,4 +31,4 @@ jobs:
         run: |
           apt-get update
       - name: Build lib
-        run: pack install stream
+        run: pack install streams
