@@ -1,14 +1,48 @@
 module FS.Pull
 
-import Control.Monad.Elin
 import public Data.Linear.ELift1
+
+import Control.Monad.Elin
+
 import Data.Linear.Ref1
 import Data.List
 import Data.Maybe
 import Data.Nat
+
+import FS.Internal.Chunk
 import FS.Scope
 
 %default total
+
+--------------------------------------------------------------------------------
+-- Chunk Size
+--------------------------------------------------------------------------------
+
+||| Pulls and streams produce their output in chunks (lists of value)
+||| for reasons of efficiency, because the whole streaming machinery
+||| comes with quite a bit of a performance overhead.
+|||
+||| Many functions for generating pure streams
+||| and pulls therefore take an auto-implicit value of type `ChunkSize`.
+||| If not provided explicitly, this defaults to 128.
+public export
+record ChunkSize where
+  [noHints]
+  constructor CS
+  size        : Nat
+  {auto 0 prf : IsSucc size}
+
+public export %inline
+fromInteger : (n : Integer) -> (0 p : IsSucc (cast n)) => ChunkSize
+fromInteger n = CS (cast n)
+
+public export %inline %hint
+defaultChunkSize : ChunkSize
+defaultChunkSize = 128
+
+--------------------------------------------------------------------------------
+-- Pull Type
+--------------------------------------------------------------------------------
 
 ||| A `Pull f o es r` is a - possibly infinite - series of effectful
 ||| computations running in monad `f`, producing an arbitrary sequence
@@ -162,14 +196,6 @@ export %inline
 foldable : Foldable m => m o -> Pull f o es ()
 foldable = output . toList
 
-||| Emits values until the given generator function returns a `Left`
-export
-unfold : (init : s) -> (s -> Either r (o,s)) -> Pull f o es r
-unfold init g =
-  assert_total $ case g init of
-    Left r       => pure r
-    Right (o,s2) => output1 o >> unfold s2 g
-
 ||| Like `unfold` but emits values in larger chunks.
 |||
 ||| This allows us to potentially emit a bunch of values right before
@@ -181,21 +207,24 @@ unfoldChunk init g =
     (os, Left r)   => output os $> r
     (os, Right s2) => output os >> unfoldChunk s2 g
 
-||| Like `unfold` but does not produce an interesting result.
-export
-unfoldMaybe : (init : s) -> (s -> Maybe (o,s)) -> Pull f o es ()
-unfoldMaybe init g =
-  assert_total $ case g init of
-    Nothing     => pure ()
-    Just (o,s2) => output1 o >> unfoldMaybe s2 g
+||| Emits values until the given generator function returns a `Left`
+export %inline
+unfold : ChunkSize => (init : s) -> (s -> Either r (o,s)) -> Pull f o es r
+unfold @{CS n} init g = unfoldChunk init (unfoldImpl [<] n g)
 
 ||| Like `unfoldMaybe` but emits values in chunks.
 export
-unfoldChunkMaybe : (init : s) -> (s -> Maybe (List o,s)) -> Pull f o es ()
+unfoldChunkMaybe : (init : s) -> (s -> (List o, Maybe s)) -> Pull f o es ()
 unfoldChunkMaybe init g =
-  assert_total $ case g init of
-    Nothing     => pure ()
-    Just (o,s2) => output o >> unfoldChunkMaybe s2 g
+  let (os,ms) := g init
+   in case ms of
+        Nothing => output os
+        Just s2 => assert_total $ output os >> unfoldChunkMaybe s2 g
+
+||| Like `unfold` but does not produce an interesting result.
+export %inline
+unfoldMaybe : ChunkSize => (init : s) -> (s -> Maybe (o,s)) -> Pull f o es ()
+unfoldMaybe @{CS n} init g = unfoldChunkMaybe init (unfoldMaybeImpl [<] n g)
 
 ||| Like `unfold` but produces values via an effectful computation
 export
@@ -218,30 +247,34 @@ export
 repeat : Pull f o es () -> Pull f o es ()
 repeat v = assert_total $ v >> repeat v
 
-||| Infinitely produces the given value
-export
-fill1 : o -> Pull f o es ()
-fill1 = repeat . output1
-
 ||| Infinitely produces chunks of values of the given size
 |||
 ||| This can be much more performant downstream.
 export
-fill : o -> Nat -> Pull f o es ()
-fill v n = let vs := replicate n v in repeat (output vs)
+fill : ChunkSize => o -> Pull f o es ()
+fill @{CS n} v = let vs := replicate n v in repeat (output vs)
 
 ||| An infinite stream of values of type `o` where
 ||| the next value is built from the previous one by
 ||| applying the given function.
-export
-iterate : o -> (o -> o) -> Pull f o es ()
-iterate v f = unfoldMaybe v (\x => Just (x, f x))
+export %inline
+iterate : ChunkSize => o -> (o -> o) -> Pull f o es ()
+iterate @{CS n} v f = unfoldChunkMaybe v (iterateImpl [<] n f)
 
-||| Produces the given value `n` times
+||| Produces the given value `n` times as chunks of the given size.
 export
-replicate : Nat -> o -> Pull f o es ()
-replicate 0     v = pure ()
-replicate (S k) v = output1 v >> replicate k v
+replicate : ChunkSize => Nat -> o -> Pull f o es ()
+replicate @{CS n} m v =
+  case m >= n of
+    False => output (replicate m v)
+    True  => go (m `minus` n) (replicate n v)
+
+  where
+    go : Nat -> List o -> Pull f o es ()
+    go rem vs =
+      case rem >= n of
+        False => output vs >> output (replicate rem v)
+        True  => output vs >> go (assert_smaller rem $ rem `minus` n) vs
 
 ||| Returns the current evaluation scope.
 |||
@@ -319,7 +352,7 @@ unconsLimit n p =
   uncons p >>= \case
     Left _       => pure Nothing
     Right (os,q) =>
-     let (pre,pst) := splitAt n os
+     let (pre,pst) := splitAtImpl [<] os n
       in pure (Just (pre, cons pst q))
 
 ||| Like `uncons`, but returns a chunk of at least `n` elements
@@ -345,8 +378,6 @@ unconsMin n af = go [<] n
           n2 => go (so <>< os) n2 q
 
 ||| Like `uncons` but returns a chunk of exactly `n` elements
-|||
-||| TODO: Use stack-safe implementation of `splitAt`
 export
 unconsN :
      (n : Nat)
@@ -356,12 +387,8 @@ unconsN :
   -> Pull f q es (Maybe (List o, Pull f o es ()))
 unconsN n af p =
   map
-    (map (\(os,q) => let (pre,pst) := splitAt n os in (pre, cons pst q)))
+    (map (\(os,q) => let (x,y) := splitAtImpl [<] os n in (x, cons y q)))
     (unconsMin n af p)
-
-takeImpl : SnocList o -> Nat -> List o -> (Nat, List o)
-takeImpl sx (S k) (x :: xs) = takeImpl (sx :< x) k xs
-takeImpl sx k     _         = (k, sx <>> [])
 
 ||| Emits the first `n` values of a `Pull`, returning the
 ||| remainder.
@@ -404,10 +431,6 @@ peek1 p =
     Right (vs@(h::_),q) => pure $ Just (h, cons vs q)
     Right ([],q)        => peek1 q
 
-dropImpl : Nat -> List o -> (Nat, List o)
-dropImpl (S k) (x :: xs) = dropImpl k xs
-dropImpl k     xs        = (k, xs)
-
 ||| Drops up to `n` values from a stream returning the remainder
 ||| if it has not already been exhausted.
 export
@@ -421,13 +444,6 @@ drop (S k) p =
        in case o2 of
             [] => drop k2 p
             _  => pure (Just $ cons o2 p)
-
-takeWhileImpl : Bool -> SnocList o -> (o -> Bool) -> List o -> Maybe (List o,List o)
-takeWhileImpl tf sx f []        = Nothing
-takeWhileImpl tf sx f (x :: xs) =
-  if      f x then takeWhileImpl tf (sx :< x) f xs
-  else if tf  then Just (sx <>> [x], xs)
-  else             Just (sx <>> [], x::xs)
 
 takeWhile_ :
      (takeFailure : Bool)
@@ -473,10 +489,6 @@ takeRight n = go []
         Nothing     => pure xs
         Just (ys,q) => go (drop (length ys) xs ++ ys) q
 
-dropWhileImpl : (o -> Bool) -> List o -> List o
-dropWhileImpl f []        = []
-dropWhileImpl f (x :: xs) = if f x then dropWhileImpl f xs else x::xs
-
 dropWhile_ :
      (dropFailure : Bool)
   -> (o -> Bool)
@@ -509,10 +521,6 @@ dropThrough :
   -> Pull f o es (Maybe $ Pull f o es ())
 dropThrough = dropWhile_ True
 
-find_ : (o -> Bool) -> List o -> Maybe (o,List o)
-find_ f []        = Nothing
-find_ f (x :: xs) = if f x then Just (x,xs) else find_ f xs
-
 ||| Returns the first value fulfilling the given predicate
 ||| together with the remainder of the stream.
 export
@@ -520,7 +528,7 @@ find : (o -> Bool) -> Pull f o es () -> Pull f p es (Maybe (o, Pull f o es ()))
 find pred p =
   assert_total $ uncons p >>= \case
     Left _       => pure Nothing
-    Right (os,q) => case find_ pred os of
+    Right (os,q) => case findImpl pred os of
       Just (v,rem) => pure (Just (v, cons rem q))
       Nothing      => find pred q
 
