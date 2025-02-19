@@ -1,0 +1,4 @@
+[custom.all.streams]
+type   = "local"
+path   = "."
+ipkg   = "streams.ipkg"

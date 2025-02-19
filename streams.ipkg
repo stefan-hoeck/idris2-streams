@@ -1,0 +1,13 @@
+package streams
+
+authors    = "stefan-hoeck"
+brief      = "Functional, effectful streaming with resource management"
+version    = 0.7.0
+sourcedir  = "src"
+depends    = base         >= 0.7.0
+           , elin
+           , async
+
+modules = FS.Pull
+        , FS.Scope
+        , FS.Stream
