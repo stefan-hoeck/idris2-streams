@@ -1,6 +1,8 @@
 ||| Utilities for working with chunks of data.
 module FS.Internal.Chunk
 
+import Data.Nat
+
 %default total
 
 ||| Utility for implementing `FS.Pull.unfold`
@@ -75,3 +77,22 @@ export
 findImpl : (o -> Bool) -> List o -> Maybe (o,List o)
 findImpl f []        = Nothing
 findImpl f (x :: xs) = if f x then Just (x,xs) else findImpl f xs
+
+chunkedGo :
+     SnocList (List a)
+  -> SnocList a
+  -> Nat
+  -> Nat
+  -> List a
+  -> List (List a)
+chunkedGo sxs sx _  _     []     = sxs <>> [sx <>> []]
+chunkedGo sxs sx sz 0     (h::t) = chunkedGo (sxs :< (sx <>> [])) [<h] sz sz t
+chunkedGo sxs sx sz (S m) (h::t) = chunkedGo sxs (sx:<h) sz m t
+
+||| Groups a list of values into chunks of size `n`.
+|||
+||| Only the last list might be shorter.
+export
+chunked : (n : Nat) -> (0 p : IsSucc n) => List a -> List (List a)
+chunked _      []     = []
+chunked (S sz) (h::t) = chunkedGo [<] [<h] sz sz t

@@ -32,6 +32,18 @@ record ChunkSize where
   size        : Nat
   {auto 0 prf : IsSucc size}
 
+export %inline
+Eq ChunkSize where
+  CS x == CS y = x == y
+
+export %inline
+Ord ChunkSize where
+  compare (CS x) (CS y) = compare x y
+
+export %inline
+Show ChunkSize where
+  show = show . size
+
 public export %inline
 fromInteger : (n : Integer) -> (0 p : IsSucc (cast n)) => ChunkSize
 fromInteger n = CS (cast n)

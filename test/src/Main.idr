@@ -1,6 +1,11 @@
 module Main
 
-%default total
+import Test.FS.Internal
+import Test.FS.Pull
 
 main : IO ()
-main = putStrLn "Testing..."
+main =
+  test
+    [ Internal.props
+    , Pull.props
+    ]
