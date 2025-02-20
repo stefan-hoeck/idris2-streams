@@ -1,10 +1,10 @@
 module Test.FS.Stream
 
 import Control.Monad.Elin
+import Data.List
+import FS.Pull
 import FS.Stream
 import Test.FS.Util
-
-%default total
 
 ||| Runs a `Stream` to completion, collecting all output in a list.
 export
@@ -19,13 +19,13 @@ runStream p = either absurd id $ runEStream p
 ||| Runs a `Stream` to completion, collecting all chunks of output in a list.
 ||| This allows us to observe the chunk structure of a `Stream`.
 export
-echunks : (forall s . Stream (Elin s) es o) -> Result es (List $ List o)
-echunks p = runElin (toChunks p)
+sechunks : (forall s . Stream (Elin s) es o) -> Result es (List $ List o)
+sechunks p = runElin (toChunks p)
 
 ||| Like `echunks`, but without the possibility of failure.
 export
-chunks : (forall s . Stream (Elin s) [] o) -> List (List o)
-chunks p = either absurd id $ echunks p
+schunks : (forall s . Stream (Elin s) [] o) -> List (List o)
+schunks p = either absurd id $ sechunks p
 
 --------------------------------------------------------------------------------
 -- Properties
@@ -47,7 +47,38 @@ prop_emitsChunks : Property
 prop_emitsChunks =
   property $ do
     vs <- forAll byteLists
-    chunks (emits vs) === nonEmpty [vs]
+    schunks (emits vs) === nonEmpty [vs]
+
+prop_unfoldChunk : Property
+prop_unfoldChunk =
+  property $ do
+    n <- forAll posNats
+    schunks (unfoldChunk n next) === map (\x => replicate x x) [n..1]
+
+  where
+    next : Nat -> (List Nat, Maybe Nat)
+    next 0       = ([], Nothing)
+    next n@(S k) = (replicate n n, Just k)
+
+prop_unfold : Property
+prop_unfold =
+  property $ do
+    n <- forAll posNats
+    runStream (unfold n next) === map (\x => x * x) [n..1]
+  where
+    next : Nat -> Maybe (Nat,Nat)
+    next 0       = Nothing
+    next n@(S k) = Just (n*n,k)
+
+prop_unfoldAsChunks : Property
+prop_unfoldAsChunks =
+  property $ do
+    [cs,n] <- forAll $ hlist [chunkSizes, posNats]
+    schunks (unfold @{cs} n next) === chunkedCS cs (map (\x => x * x) [n..1])
+  where
+    next : Nat -> Maybe (Nat,Nat)
+    next 0       = Nothing
+    next n@(S k) = Just (n*n,k)
 
 --------------------------------------------------------------------------------
 -- Group
@@ -60,4 +91,7 @@ props =
     [ ("prop_emit", prop_emit)
     , ("prop_emits", prop_emits)
     , ("prop_emitsChunks", prop_emitsChunks)
+    , ("prop_unfoldChunk", prop_unfoldChunk)
+    , ("prop_unfold", prop_unfold)
+    , ("prop_unfoldAsChunks", prop_unfoldAsChunks)
     ]

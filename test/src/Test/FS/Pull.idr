@@ -292,6 +292,10 @@ prop_peek1rem =
     vss <- forAll byteChunks
     chunks (peek1 (fromChunks vss) >>= tailOut) === filter (not . null) vss
 
+--------------------------------------------------------------------------------
+-- Group
+--------------------------------------------------------------------------------
+
 export
 props : Group
 props =

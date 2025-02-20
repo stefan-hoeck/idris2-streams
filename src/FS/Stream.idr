@@ -91,7 +91,7 @@ evalFoldable act = S (Eval act >>= foldable)
 ||| the given generator function to the threaded state
 ||| until a `Nothing` is returned
 export %inline
-unfold : (init : s) -> (s -> Maybe (o,s)) -> Stream f es o
+unfold : ChunkSize => (init : s) -> (s -> Maybe (o,s)) -> Stream f es o
 unfold init g = S $ unfoldMaybe init g
 
 ||| Like `unfoldMaybe` but emits values in chunks.
@@ -111,12 +111,12 @@ repeat (S v) = S $ repeat v
 ||| An infinite stream constantly emitting the given value
 ||| in chunks of the given size.
 export
-constant : o -> (size : Nat) -> Stream f es o
-constant v size = repeat (emits $ replicate size v)
+constant : ChunkSize => o -> Stream f es o
+constant v = S $ fill v
 
 export
-iterate : o -> (o -> o) -> Stream f es o
-iterate v f = unfold v (\x => Just (x, f x))
+iterate : ChunkSize => o -> (o -> o) -> Stream f es o
+iterate v f = S $ iterate v f
 
 export %inline
 stream : Pull f o es () -> Stream f es o
@@ -151,9 +151,8 @@ take : Nat -> Stream f es o -> Stream f es o
 take n = stream . ignore . take n . pull
 
 export
-replicate : Nat -> o -> Stream f es o
-replicate n v =
-  if n <= 0xff then emits (replicate n v) else take n (constant v 0xff)
+replicate : ChunkSize => Nat -> o -> Stream f es o
+replicate n v = S $ replicate n v
 
 ||| Emits the last `n` values of a stream
 export
