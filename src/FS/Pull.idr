@@ -391,7 +391,9 @@ unconsMin n af = go [<] n
       -> Pull f q es (Maybe (List o, Pull f o es ()))
     go so n p =
       assert_total $ uncons p >>= \case
-        Left _ => if af then pure $ Just (so <>> [], pure ()) else pure Nothing
+        Left _ => case so <>> [] of
+          [] => pure Nothing
+          os => if af then pure $ Just (os, pure ()) else pure Nothing
         Right (os,q) => case n `minus` length os of
           0  => pure $ Just (so <>> os, q)
           n2 => go (so <>< os) n2 q

@@ -262,6 +262,13 @@ prop_takerem =
     [n, vss] <- forAll $ hlist [smallNats, byteChunks]
     runPull (take n (fromChunks vss) >>= fromMaybe (pure ())) === join vss
 
+prop_takeRight : Property
+prop_takeRight =
+  property $ do
+    [n, vss] <- forAll $ hlist [smallNats, byteChunks]
+    runPull (takeRight (S n) (fromChunks vss) >>= output) ===
+      reverse (take (S n) . reverse $ join vss)
+
 prop_last : Property
 prop_last =
   property $ do
@@ -329,6 +336,7 @@ props =
     , ("prop_unconsNTrue", prop_unconsNTrue)
     , ("prop_take", prop_take)
     , ("prop_takerem", prop_takerem)
+    , ("prop_takeRight", prop_takeRight)
     , ("prop_last", prop_last)
     , ("prop_peek", prop_peek)
     , ("prop_peekrem", prop_peekrem)

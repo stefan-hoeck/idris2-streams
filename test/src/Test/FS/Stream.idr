@@ -134,6 +134,13 @@ prop_take =
     [n, vss] <- forAll $ hlist [smallNats, byteChunks]
     runStream (take n (fromChunks vss)) === take n (join vss)
 
+prop_takeRight : Property
+prop_takeRight =
+  property $ do
+    [n, vss] <- forAll $ hlist [smallNats, byteChunks]
+    runStream (takeRight (S n) (fromChunks vss)) ===
+      reverse (take (S n) . reverse $ join vss)
+
 prop_replicate : Property
 prop_replicate =
   property $ do
@@ -169,6 +176,7 @@ props =
     , ("prop_cons1", prop_cons1)
     , ("prop_append", prop_append)
     , ("prop_take", prop_take)
+    , ("prop_takeRight", prop_takeRight)
     , ("prop_replicate", prop_replicate)
     , ("prop_replicateChunks", prop_replicateChunks)
     ]
