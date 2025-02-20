@@ -9,6 +9,26 @@ import FS.Pull
 
 %default total
 
+||| A `Stream f es o` is a newtype wrapper around a `Pull f o es ()`.
+|||
+||| Unlike a `Pull`, which is used to sequence computations with regard
+||| to the pull's final result, a `Stream` effectfully produces a
+||| sequence of values, similar to a list. Likewise, as with lists,
+||| the monad implementation creates new streams from emitted values and
+||| joins them.
+|||
+||| So, for a `Pull`, running the following code produces the values
+||| `[1,2,3,4,5,6]`:
+|||
+||| ```idris
+||| output [1,2,3] >> output [4,5,6]
+||| ```
+|||
+||| while the following `Stream` produces the values `[4,5,6,4,5,6,4,5,6]`:
+|||
+||| ```idris
+||| ignore (emits [1,2,3]) >> emits [4,5,6]
+||| ```
 public export
 record Stream (f : List Type -> Type -> Type) (es : List Type) (o : Type) where
   constructor S
