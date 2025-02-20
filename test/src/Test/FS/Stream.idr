@@ -80,6 +80,72 @@ prop_unfoldAsChunks =
     next 0       = Nothing
     next n@(S k) = Just (n*n,k)
 
+prop_constant : Property
+prop_constant =
+  property $ do
+    [n,v] <- forAll $ hlist [smallNats, bytes]
+    runStream (take n $ constant v) === replicate n v
+
+prop_constantChunks : Property
+prop_constantChunks =
+  property $ do
+    [cs, n,v] <- forAll $ hlist [chunkSizes, smallNats, bytes]
+    schunks (take n $ constant @{cs} v) === chunkedCS cs (replicate n v)
+
+prop_iterate : Property
+prop_iterate =
+  property $ do
+    n <- forAll posNats
+    runStream (take n $ iterate 0 S) === [0..pred n]
+
+prop_iterateChunks : Property
+prop_iterateChunks =
+  property $ do
+    [cs,n] <- forAll $ hlist [chunkSizes, posNats]
+    schunks (take n $ iterate @{cs} 0 S) === chunkedCS cs [0..pred n]
+
+prop_fromChunks : Property
+prop_fromChunks =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (fromChunks vss) === filter (not . null) vss
+
+prop_cons : Property
+prop_cons =
+  property $ do
+    [vs,vss] <- forAll $ hlist [byteLists, byteChunks]
+    schunks (cons vs $ fromChunks vss) === filter (not . null) (vs::vss)
+
+prop_cons1 : Property
+prop_cons1 =
+  property $ do
+    [v,vss] <- forAll $ hlist [bytes, byteChunks]
+    schunks (cons1 v $ fromChunks vss) === filter (not . null) ([v]::vss)
+
+prop_append : Property
+prop_append =
+  property $ do
+    [vss,wss] <- forAll $ hlist [byteChunks, byteChunks]
+    schunks (fromChunks vss ++ fromChunks wss) === filter (not . null) (vss++wss)
+
+prop_take : Property
+prop_take =
+  property $ do
+    [n, vss] <- forAll $ hlist [smallNats, byteChunks]
+    runStream (take n (fromChunks vss)) === take n (join vss)
+
+prop_replicate : Property
+prop_replicate =
+  property $ do
+    [n,v] <- forAll $ hlist [smallNats, bytes]
+    runStream (replicate n v) === replicate n v
+
+prop_replicateChunks : Property
+prop_replicateChunks =
+  property $ do
+    [cs,n,v] <- forAll $ hlist [chunkSizes, smallNats, bytes]
+    schunks (replicate @{cs} n v) === chunkedCS cs (replicate n v)
+
 --------------------------------------------------------------------------------
 -- Group
 --------------------------------------------------------------------------------
@@ -94,4 +160,15 @@ props =
     , ("prop_unfoldChunk", prop_unfoldChunk)
     , ("prop_unfold", prop_unfold)
     , ("prop_unfoldAsChunks", prop_unfoldAsChunks)
+    , ("prop_constant", prop_constant)
+    , ("prop_constantChunks", prop_constantChunks)
+    , ("prop_iterate", prop_iterate)
+    , ("prop_iterateChunks", prop_iterateChunks)
+    , ("prop_fromChunks", prop_fromChunks)
+    , ("prop_cons", prop_cons)
+    , ("prop_cons1", prop_cons1)
+    , ("prop_append", prop_append)
+    , ("prop_take", prop_take)
+    , ("prop_replicate", prop_replicate)
+    , ("prop_replicateChunks", prop_replicateChunks)
     ]
