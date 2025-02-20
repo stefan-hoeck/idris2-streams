@@ -6,6 +6,10 @@ import public Hedgehog
 
 %default total
 
+--------------------------------------------------------------------------------
+-- Generators
+--------------------------------------------------------------------------------
+
 export %inline
 bytes : Gen Bits8
 bytes = anyBits8
@@ -42,18 +46,31 @@ export %inline
 chunkedCS : ChunkSize -> List a -> List (List a)
 chunkedCS (CS sz) = chunked sz
 
+--------------------------------------------------------------------------------
+-- Utilities
+--------------------------------------------------------------------------------
+
+||| Removes all empty lists from the given list of lists
+export
+nonEmpty : List (List a) -> List (List a)
+nonEmpty = filter (not . null)
+
+||| Returns the (optional) last element of a list wrapped in a list
 export
 lastl : List a -> List a
 lastl []     = []
 lastl [v]    = [v]
 lastl (_::t) = lastl t
 
+||| Returns the (optional) first non-empty chunk in a list of chunks.
 export
 firstNotNull : List (List a) -> List (List a)
 firstNotNull []      = []
 firstNotNull ([]::t) = firstNotNull t
 firstNotNull (h::t)  = [h]
 
+||| Returns the (optional) head of the first non-empty chunk in a list
+||| of chunks.
 export
 firstl : List (List a) -> List (List a)
 firstl vss =
@@ -61,6 +78,7 @@ firstl vss =
     (h::_)::_ => [[h]]
     _         => []
 
+||| Emits the first chunk of data in the given foldable (if any).
 export
 headOut : Foldable m => m (List o, Pull f o es ()) -> Pull f o es ()
 headOut ps =
@@ -68,6 +86,7 @@ headOut ps =
     []          => pure ()
     (vs,_) :: _ => output vs
 
+||| Returns the first pull in the given foldable (if any).
 export
 tailOut : Foldable m => m (q, Pull f o es ()) -> Pull f o es ()
 tailOut ps =
@@ -75,6 +94,7 @@ tailOut ps =
     []          => pure ()
     (_,tl) :: _ => tl
 
+||| Emits the first value in the given foldable (if any).
 export
 headOut1 : Foldable m => m (o, Pull f o es ()) -> Pull f o es ()
 headOut1 ps =

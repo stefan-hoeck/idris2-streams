@@ -50,9 +50,7 @@ prop_outputChunks : Property
 prop_outputChunks =
   property $ do
     vs <- forAll byteLists
-    case vs of
-      [] => chunks (output vs) === []
-      _  => chunks (output vs) === [vs]
+    chunks (output vs) === nonEmpty [vs]
 
 prop_foldable : Property
 prop_foldable =
