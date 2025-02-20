@@ -165,6 +165,10 @@ replicate : ChunkSize => Nat -> o -> Stream f es o
 replicate n v = S $ replicate n v
 
 ||| Emits the last `n` values of a stream
+|||
+||| Note: The whole `n` values have to be kept in memory, therefore,
+|||       the result will be emitted as a single chunk. Take memory
+|||       consumption into account when using this for very large `n`.
 export
 takeRight : (n : Nat) -> (0 p : IsSucc n) => Stream f es o -> Stream f es o
 takeRight n (S p) = S $ takeRight n p >>= output
