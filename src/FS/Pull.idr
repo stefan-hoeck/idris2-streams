@@ -496,6 +496,10 @@ takeThrough :
 takeThrough = takeWhile_ True
 
 ||| Emits the last `n` elements of the input
+|||
+||| Note: The whole `n` values have to be kept in memory, therefore,
+|||       the result will be emitted as a single chunk. Take memory
+|||       consumption into account when using this for very large `n`.
 export
 takeRight :
      (n : Nat)
