@@ -248,20 +248,40 @@ unfoldMaybe : ChunkSize => (init : s) -> (s -> Maybe (o,s)) -> Pull f o es ()
 unfoldMaybe @{CS n} init g = unfoldChunkMaybe init (unfoldMaybeImpl [<] n g)
 
 ||| Like `unfold` but produces values via an effectful computation
+||| until a `Left` is returned.
 export
-unfoldEval : (init : s) -> (s -> f es (Either r (o,s))) -> Pull f o es r
-unfoldEval init g =
-  assert_total $ Eval (g init) >>= \case
-    Left r       => pure r
-    Right (o,s2) => output1 o >> unfoldEval s2 g
+unfoldEval : f es (Either r o) -> Pull f o es r
+unfoldEval act =
+  assert_total $ Eval act >>= \case
+    Left r  => pure r
+    Right o => output1 o >> unfoldEval act
 
-||| Like `unfoldEval` but does not produce an interesting result.
+||| Like `unfold` but produces values via an effectful computation
+||| until a `Nothing` is returned.
 export
-unfoldEvalMaybe : (init : s) -> (s -> f es (Maybe (o,s))) -> Pull f o es ()
-unfoldEvalMaybe init g =
-  assert_total $ Eval (g init) >>= \case
-    Nothing     => pure ()
-    Just (o,s2) => output1 o >> unfoldEvalMaybe s2 g
+unfoldEvalMaybe : f es (Maybe o) -> Pull f o es ()
+unfoldEvalMaybe act =
+  assert_total $ Eval act >>= \case
+    Nothing => pure ()
+    Just o  => output1 o >> unfoldEvalMaybe act
+
+||| Like `unfoldEval` but produces values via an effectful computation
+||| until the given function returns a `Just`.
+export
+unfoldEvalChunk : f es (List o, Maybe r) -> Pull f o es r
+unfoldEvalChunk act =
+  assert_total $ Eval act >>= \case
+    (vs, Just r)  => output vs $> r
+    (vs, Nothing) => output vs >> unfoldEvalChunk act
+
+||| Like `unfoldEval` but produces values via an effectful computation
+||| until the given function returns a `Nothing`.
+export
+unfoldEvalChunkMaybe : f es (Maybe $ List o) -> Pull f o es ()
+unfoldEvalChunkMaybe act =
+  assert_total $ Eval act >>= \case
+    Nothing => pure ()
+    Just vs => output vs >> unfoldEvalChunkMaybe act
 
 ||| Infinitely cycles through the given `Pull`
 export
@@ -391,7 +411,9 @@ unconsMin n af = go [<] n
       -> Pull f q es (Maybe (List o, Pull f o es ()))
     go so n p =
       assert_total $ uncons p >>= \case
-        Left _ => if af then pure $ Just (so <>> [], pure ()) else pure Nothing
+        Left _ => case so <>> [] of
+          [] => pure Nothing
+          os => if af then pure $ Just (os, pure ()) else pure Nothing
         Right (os,q) => case n `minus` length os of
           0  => pure $ Just (so <>> os, q)
           n2 => go (so <>< os) n2 q
@@ -454,8 +476,8 @@ peek1 p =
 ||| if it has not already been exhausted.
 export
 drop : Nat -> Pull f o es () -> Pull f o es (Maybe $ Pull f o es ())
-drop 0     p = pure (Just p)
-drop (S k) p =
+drop 0 p = pure (Just p)
+drop k p =
   assert_total $ uncons p >>= \case
     Left _      => pure Nothing
     Right (o,p) =>
@@ -494,6 +516,10 @@ takeThrough :
 takeThrough = takeWhile_ True
 
 ||| Emits the last `n` elements of the input
+|||
+||| Note: The whole `n` values have to be kept in memory, therefore,
+|||       the result will be emitted as a single chunk. Take memory
+|||       consumption into account when using this for very large `n`.
 export
 takeRight :
      (n : Nat)

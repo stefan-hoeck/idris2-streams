@@ -171,13 +171,13 @@ prop_fromChunks : Property
 prop_fromChunks =
   property $ do
     vss <- forAll byteChunks
-    chunks (fromChunks vss) === filter (not . null) vss
+    chunks (fromChunks vss) === nonEmpty vss
 
 prop_cons : Property
 prop_cons =
   property $ do
     [vs,vss] <- forAll $ hlist [byteLists, byteChunks]
-    chunks (cons vs $ fromChunks vss) === filter (not . null) (vs::vss)
+    chunks (cons vs $ fromChunks vss) === nonEmpty (vs::vss)
 
 prop_uncons : Property
 prop_uncons =
@@ -189,24 +189,20 @@ prop_unconsrem : Property
 prop_unconsrem =
   property $ do
     vss <- forAll byteChunks
-    chunks (uncons (fromChunks vss) >>= tailOut) ===
-      drop 1 (filter (not . null) vss)
+    chunks (uncons (fromChunks vss) >>= tailOut) === drop 1 (nonEmpty vss)
 
 prop_uncons1 : Property
 prop_uncons1 =
   property $ do
     vss <- forAll byteChunks
-    let res := runPull (uncons1 (fromChunks vss) >>= headOut1)
-    case filter (not . null) vss of
-      (h::_)::_ => res === [h]
-      _         => res === []
+    chunks (uncons1 (fromChunks vss) >>= headOut1) === firstl vss
 
 prop_unconsLimit : Property
 prop_unconsLimit =
   property $ do
     [CS n, vss] <- forAll $ hlist [chunkSizes, byteChunks]
     let res := chunks (unconsLimit n (fromChunks vss) >>= headOut)
-    case filter (not . null) vss of
+    case nonEmpty vss of
       h::_ => res === [take n h]
       _    => res === []
 
@@ -260,7 +256,14 @@ prop_takerem : Property
 prop_takerem =
   property $ do
     [n, vss] <- forAll $ hlist [smallNats, byteChunks]
-    runPull (take n (fromChunks vss) >>= fromMaybe (pure ())) === join vss
+    runPull (take n (fromChunks vss) >>= orEmpty) === join vss
+
+prop_takeRight : Property
+prop_takeRight =
+  property $ do
+    [n, vss] <- forAll $ hlist [smallNats, byteChunks]
+    runPull (takeRight (S n) (fromChunks vss) >>= output) ===
+      reverse (take (S n) . reverse $ join vss)
 
 prop_last : Property
 prop_last =
@@ -278,7 +281,7 @@ prop_peekrem : Property
 prop_peekrem =
   property $ do
     vss <- forAll byteChunks
-    chunks (peek (fromChunks vss) >>= tailOut) === filter (not . null) vss
+    chunks (peek (fromChunks vss) >>= tailOut) === nonEmpty vss
 
 prop_peek1 : Property
 prop_peek1 =
@@ -290,7 +293,32 @@ prop_peek1rem : Property
 prop_peek1rem =
   property $ do
     vss <- forAll byteChunks
-    chunks (peek1 (fromChunks vss) >>= tailOut) === filter (not . null) vss
+    chunks (peek1 (fromChunks vss) >>= tailOut) === nonEmpty vss
+
+prop_takeWhileRem : Property
+prop_takeWhileRem =
+  property $ do
+    vss <- forAll byteChunks
+    runPull (takeWhile (< 10) (fromChunks vss) >>= orEmpty) ===
+      join vss
+
+prop_takeThroughRem : Property
+prop_takeThroughRem =
+  property $ do
+    vss <- forAll byteChunks
+    runPull (takeThrough (< 10) (fromChunks vss) >>= orEmpty) ===
+      join vss
+
+prop_find : Property
+prop_find =
+  property $ do
+    vss <- forAll byteChunks
+    runPull (find (> 10) (fromChunks vss) >>= emitBoth1) ===
+      dropWhile (<= 10) (join vss)
+
+--------------------------------------------------------------------------------
+-- Group
+--------------------------------------------------------------------------------
 
 export
 props : Group
@@ -325,9 +353,13 @@ props =
     , ("prop_unconsNTrue", prop_unconsNTrue)
     , ("prop_take", prop_take)
     , ("prop_takerem", prop_takerem)
+    , ("prop_takeRight", prop_takeRight)
+    , ("prop_takeWhileRem", prop_takeWhileRem)
+    , ("prop_takeThroughRem", prop_takeThroughRem)
     , ("prop_last", prop_last)
     , ("prop_peek", prop_peek)
     , ("prop_peekrem", prop_peekrem)
     , ("prop_peek1", prop_peek1)
     , ("prop_peek1rem", prop_peek1rem)
+    , ("prop_find", prop_find)
     ]
