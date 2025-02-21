@@ -52,6 +52,13 @@ chunkedCS (CS sz) = chunked sz
 -- Utilities
 --------------------------------------------------------------------------------
 
+export
+fold1s : (a -> a -> a) -> List (List a) -> List a
+fold1s f vs =
+  case join vs of
+    h::t => [foldl f h t]
+    []   => []
+
 ||| Removes all empty lists from the given list of lists
 export
 nonEmpty : List (List a) -> List (List a)

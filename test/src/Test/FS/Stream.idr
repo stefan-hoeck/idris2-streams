@@ -3,6 +3,7 @@ module Test.FS.Stream
 import Control.Monad.Elin
 import Data.Linear.Traverse1
 import Data.List
+import Data.SnocList
 import FS.Pull
 import FS.Stream
 import Test.FS.Util
@@ -297,6 +298,37 @@ prop_evalMapChunkPure =
     vss <- forAll byteChunks
     runStream (evalMapChunk pure $ fromChunks vss) === join vss
 
+prop_foldChunks : Property
+prop_foldChunks =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (foldChunks (the Bits8 0) (\n => (n+) . sum) (fromChunks vss)) ===
+      [sum $ join vss]
+
+prop_fold : Property
+prop_fold =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (fold 0 (+) (fromChunks vss)) === [sum $ join vss]
+
+prop_fold1 : Property
+prop_fold1 =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (fold1 max $ fromChunks vss) === fold1s max vss
+
+prop_foldMap : Property
+prop_foldMap =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (foldMap ([<]:<) $ fromChunks vss) === [[<] <>< join vss]
+
+prop_concat : Property
+prop_concat =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (concat . map ([<]:<) $ fromChunks vss) === [[<] <>< join vss]
+
 --------------------------------------------------------------------------------
 -- Group
 --------------------------------------------------------------------------------
@@ -346,4 +378,9 @@ props =
     , ("prop_evalMapPure", prop_evalMapPure)
     , ("prop_evalMapChunk", prop_evalMapChunk)
     , ("prop_evalMapChunkPure", prop_evalMapChunkPure)
+    , ("prop_foldChunks", prop_foldChunks)
+    , ("prop_fold", prop_fold)
+    , ("prop_fold1", prop_fold1)
+    , ("prop_foldMap", prop_foldMap)
+    , ("prop_concat", prop_concat)
     ]
