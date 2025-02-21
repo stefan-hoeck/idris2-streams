@@ -329,6 +329,32 @@ prop_concat =
     vss <- forAll byteChunks
     runStream (concat . map ([<]:<) $ fromChunks vss) === [[<] <>< join vss]
 
+prop_zipWith : Property
+prop_zipWith =
+  property $ do
+    [vss,wss] <- forAll $ hlist [byteChunks, byteChunks]
+    runStream (zipWith (+) (fromChunks vss) (fromChunks wss)) ===
+      zipWith (+) (join vss) (join wss)
+
+prop_zip : Property
+prop_zip =
+  property $ do
+    [vss,wss] <- forAll $ hlist [byteChunks, byteChunks]
+    runStream (zip (fromChunks vss) (fromChunks wss)) ===
+      zip (join vss) (join wss)
+
+prop_padLeft : Property
+prop_padLeft =
+  property $ do
+    [v,vss] <- forAll $ hlist [bytes, byteChunks]
+    runStream (zipAll v v neutral (fromChunks vss)) === map (v,) (join vss)
+
+prop_padRight : Property
+prop_padRight =
+  property $ do
+    [v,vss] <- forAll $ hlist [bytes, byteChunks]
+    runStream (zipAll v v (fromChunks vss) neutral) === map (,v) (join vss)
+
 --------------------------------------------------------------------------------
 -- Group
 --------------------------------------------------------------------------------
@@ -383,4 +409,8 @@ props =
     , ("prop_fold1", prop_fold1)
     , ("prop_foldMap", prop_foldMap)
     , ("prop_concat", prop_concat)
+    , ("prop_zip", prop_zip)
+    , ("prop_zipWith", prop_zipWith)
+    , ("prop_padLeft", prop_padLeft)
+    , ("prop_padRight", prop_padRight)
     ]
