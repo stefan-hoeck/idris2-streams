@@ -105,9 +105,17 @@ export %inline
 fromChunks : List (List o) -> Stream f es o
 fromChunks vss = S $ fromChunks vss
 
+||| Produces values via the given effectful computations until it returns
+||| `Nothing`.
 export %inline
-unfoldEval : (init : s) -> (s -> f es (Maybe (o,s))) -> Stream f es o
-unfoldEval init g = S $ unfoldEvalMaybe init g
+unfoldEval : f es (Maybe o) -> Stream f es o
+unfoldEval act = S $ unfoldEvalMaybe act
+
+||| Produces chunks of values via the given effectful computations until
+||| it returns `Nothing`.
+export %inline
+unfoldEvalChunk : f es (Maybe $ List o) -> Stream f es o
+unfoldEvalChunk act = S $ unfoldEvalChunkMaybe act
 
 ||| Infinitely repeats the given stream.
 export
@@ -200,6 +208,14 @@ export
 dropThrough : (o -> Bool) -> Stream f es o -> Stream f es o
 dropThrough pred (S p) = S $ dropThrough pred p >>= fromMaybe (pure ())
 
+||| Emits the first value fulfilling the given predicate.
+export
+find : (o -> Bool) -> Stream f es o -> Stream f es o
+find pred (S p) =
+  stream $ do
+    Just (v,_) <- find pred p | Nothing => pure ()
+    output1 v
+
 ||| Chunk-wise maps the values produced by a stream
 export %inline
 mapChunks : (List o -> List p) -> Stream f es o -> Stream f es p
@@ -211,6 +227,7 @@ filter : (o -> Bool) -> Stream f es o -> Stream f es o
 filter pred = S . filter pred . pull
 
 ||| Emits only inputs which do not match the supplied predicate.
+export %inline
 filterNot : (o -> Bool) -> Stream f es o -> Stream f es o
 filterNot pred = filter (not . pred)
 
@@ -233,10 +250,10 @@ evalMap f s = s >>= eval . f
 export
 evalMapChunk :
      {auto app : Applicative (f es)}
-  -> (o -> f es p)
+  -> (List o -> f es (List p))
   -> Stream f es o
   -> Stream f es p
-evalMapChunk g s = chunks s >>= evals . traverse g
+evalMapChunk g s = chunks s >>= evals . g
 
 ||| Chunk-wise folds all inputs using an initial
 ||| value and supplied binary operator, and emits a single element stream.
@@ -271,7 +288,7 @@ concat = foldChunks neutral (\v,vs => v <+> concat vs)
 ||| infinite and all inputs match the predicate.
 export
 all : (o -> Bool) -> Stream f es o -> Stream f es Bool
-all pred (S p) = S $ all pred p >>= output1
+all pred (S p) = stream $ all pred p >>= output1
 
 ||| Emits `Talse` and halts as soon as a non-matching
 ||| element is received; or emits a single `False` value if it
@@ -280,7 +297,7 @@ all pred (S p) = S $ all pred p >>= output1
 ||| infinite and all inputs do not match the predicate.
 export
 any : (o -> Bool) -> Stream f es o -> Stream f es Bool
-any pred (S p) = S $ any pred p >>= output1
+any pred (S p) = stream $ any pred p >>= output1
 
 --------------------------------------------------------------------------------
 -- Effects
@@ -288,7 +305,7 @@ any pred (S p) = S $ any pred p >>= output1
 
 export %inline
 drain : Stream f es o -> Stream f es q
-drain = (>>= neutral)
+drain = mapChunks (const [])
 
 export
 observe : (o -> f es ()) -> Stream f es o -> Stream f es o

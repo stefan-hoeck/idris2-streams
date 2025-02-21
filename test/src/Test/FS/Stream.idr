@@ -1,6 +1,7 @@
 module Test.FS.Stream
 
 import Control.Monad.Elin
+import Data.Linear.Traverse1
 import Data.List
 import FS.Pull
 import FS.Stream
@@ -26,6 +27,10 @@ sechunks p = runElin (toChunks p)
 export
 schunks : (forall s . Stream (Elin s) [] o) -> List (List o)
 schunks p = either absurd id $ sechunks p
+
+export
+testStream : Show o => (forall s . Stream (Elin s) [] o) -> IO ()
+testStream = printLn . runStream
 
 --------------------------------------------------------------------------------
 -- Properties
@@ -153,6 +158,145 @@ prop_replicateChunks =
     [cs,n,v] <- forAll $ hlist [chunkSizes, smallNats, bytes]
     schunks (replicate @{cs} n v) === chunkedCS cs (replicate n v)
 
+prop_drop : Property
+prop_drop =
+  property $ do
+    [n, vss] <- forAll $ hlist [smallNats, byteChunks]
+    runStream (drop n (fromChunks vss)) === drop n (join vss)
+
+prop_takeWhile : Property
+prop_takeWhile =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (takeWhile (< 100) (fromChunks vss)) === takeWhile (< 100) (join vss)
+
+prop_takeWhileTrue : Property
+prop_takeWhileTrue =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (takeWhile (const True) (fromChunks vss)) === nonEmpty vss
+
+prop_takeWhileFalse : Property
+prop_takeWhileFalse =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (takeWhile (const False) (fromChunks vss)) === []
+
+prop_takeThroughTrue : Property
+prop_takeThroughTrue =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (takeThrough (const True) (fromChunks vss)) === nonEmpty vss
+
+prop_takeThroughFalse : Property
+prop_takeThroughFalse =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (takeThrough (const False) (fromChunks vss)) === firstl vss
+
+prop_dropWhile : Property
+prop_dropWhile =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (dropWhile (< 100) (fromChunks vss)) === dropWhile (< 100) (join vss)
+
+prop_dropWhileTrue : Property
+prop_dropWhileTrue =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (dropWhile (const True) (fromChunks vss)) === []
+
+prop_dropWhileFalse : Property
+prop_dropWhileFalse =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (dropWhile (const False) (fromChunks vss)) === nonEmpty vss
+
+prop_dropThroughTrue : Property
+prop_dropThroughTrue =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (dropThrough (const True) (fromChunks vss)) === []
+
+prop_dropThroughFalse : Property
+prop_dropThroughFalse =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (dropThrough (const False) (fromChunks vss)) === drop 1 (join vss)
+
+prop_find : Property
+prop_find =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (find (> 10) (fromChunks vss)) === toList (find (> 10) $ join vss)
+
+prop_mapChunksId : Property
+prop_mapChunksId =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (mapChunks id (fromChunks vss)) === nonEmpty vss
+
+prop_mapChunksConst : Property
+prop_mapChunksConst =
+  property $ do
+    [n,vss] <- forAll $ hlist [smallNats, byteChunks]
+    schunks (mapChunks (const [n]) (fromChunks vss)) ===
+      map (const [n]) (nonEmpty vss)
+
+prop_drain : Property
+prop_drain =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (drain {q = Nat} (fromChunks vss)) === []
+
+prop_filter : Property
+prop_filter =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (filter (> 3) (fromChunks vss)) === nonEmpty (filter (> 3) <$> vss)
+
+prop_filterNot : Property
+prop_filterNot =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (filterNot (> 3) (fromChunks vss)) === nonEmpty (filter (<= 3) <$> vss)
+
+prop_unfoldEval : Property
+prop_unfoldEval =
+  property $ do
+    vs <- forAll byteLists
+    runStream (evalFromList vs) === vs
+
+prop_unfoldEvalChunk : Property
+prop_unfoldEvalChunk =
+  property $ do
+    vss <- forAll byteChunks
+    schunks (evalFromChunks vss) === nonEmpty vss
+
+prop_evalMap : Property
+prop_evalMap =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (zipIx1 $ fromChunks vss) === zipWithIndex (join vss)
+
+prop_evalMapPure : Property
+prop_evalMapPure =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (evalMap pure $ fromChunks vss) === join vss
+
+prop_evalMapChunk : Property
+prop_evalMapChunk =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (zipIx $ fromChunks vss) === zipWithIndex (join vss)
+
+prop_evalMapChunkPure : Property
+prop_evalMapChunkPure =
+  property $ do
+    vss <- forAll byteChunks
+    runStream (evalMapChunk pure $ fromChunks vss) === join vss
+
 --------------------------------------------------------------------------------
 -- Group
 --------------------------------------------------------------------------------
@@ -179,4 +323,27 @@ props =
     , ("prop_takeRight", prop_takeRight)
     , ("prop_replicate", prop_replicate)
     , ("prop_replicateChunks", prop_replicateChunks)
+    , ("prop_drop", prop_drop)
+    , ("prop_takeWhile", prop_takeWhile)
+    , ("prop_takeWhileTrue", prop_takeWhileTrue)
+    , ("prop_takeWhileFalse", prop_takeWhileFalse)
+    , ("prop_takeThroughTrue", prop_takeThroughTrue)
+    , ("prop_takeThroughFalse", prop_takeThroughFalse)
+    , ("prop_dropWhile", prop_dropWhile)
+    , ("prop_dropWhileTrue", prop_dropWhileTrue)
+    , ("prop_dropWhileFalse", prop_dropWhileFalse)
+    , ("prop_dropThroughTrue", prop_dropThroughTrue)
+    , ("prop_dropThroughFalse", prop_dropThroughFalse)
+    , ("prop_find", prop_find)
+    , ("prop_mapChunksId", prop_mapChunksId)
+    , ("prop_mapChunksConst", prop_mapChunksConst)
+    , ("prop_drain", prop_drain)
+    , ("prop_filter", prop_filter)
+    , ("prop_filterNot", prop_filterNot)
+    , ("prop_unfoldEval", prop_unfoldEval)
+    , ("prop_unfoldEvalChunk", prop_unfoldEvalChunk)
+    , ("prop_evalMap", prop_evalMap)
+    , ("prop_evalMapPure", prop_evalMapPure)
+    , ("prop_evalMapChunk", prop_evalMapChunk)
+    , ("prop_evalMapChunkPure", prop_evalMapChunkPure)
     ]
