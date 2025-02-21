@@ -5,7 +5,9 @@ import public Data.Linear.ELift1
 import Data.List
 import Data.Maybe
 import Data.Nat
+import FS.Internal.Chunk
 import FS.Pull
+import FS.Scope
 
 %default total
 
@@ -340,6 +342,162 @@ all pred (S p) = stream $ all pred p >>= output1
 export
 any : (o -> Bool) -> Stream f es o -> Stream f es Bool
 any pred (S p) = stream $ any pred p >>= output1
+
+--------------------------------------------------------------------------------
+-- Scans
+--------------------------------------------------------------------------------
+
+||| General stateful conversion of a `Streams`s output.
+|||
+||| Aborts as soon as the given accumulator function returns `Nothing`
+export
+scanChunksMaybe :
+     s
+  -> (s -> Maybe (List o -> (List p,s)))
+  -> Stream f es o
+  -> Stream f es p
+scanChunksMaybe s1 f = stream . ignore . scanChunksMaybe s1 f . pull
+
+||| Like `scanChunksMaybe` but will transform the whole output.
+export %inline
+scanChunks : (init: s) -> (s -> List o -> (List p,s)) -> Stream f es o -> Stream f es p
+scanChunks init fun = S . ignore . scanChunks init fun . pull
+
+export %inline
+mapAccumulate : (init: s) -> (s -> o -> (s,p)) -> Stream f es o -> Stream f es p
+mapAccumulate init fun = scanChunks init (mapAccum [<] fun)
+
+||| Zips the input with a running total according to `s`, up to but
+||| not including the current element. Thus the initial
+||| `vp` value is the first emitted to the output:
+export
+zipWithScan : p -> (p -> o -> p) -> Stream f es o -> Stream f es (o,p)
+zipWithScan vp fun =
+  mapAccumulate vp $ \vp1,vo =>
+    let vp2 := fun vp1 vo
+     in (vp2, (vo, vp1))
+
+||| Pairs each element in the stream with its 0-based index.
+export %inline
+zipWithIndex : Stream f es o -> Stream f es (o,Nat)
+zipWithIndex = zipWithScan 0 (\n,_ => S n)
+
+||| Like `zipWithScan` but the running total is including the current element.
+export
+zipWithScan1 : p -> (p -> o -> p) -> Stream f es o -> Stream f es (o,p)
+zipWithScan1 vp fun =
+  mapAccumulate vp $ \vp1,vo =>
+    let vp2 := fun vp1 vo
+     in (vp2, (vo, vp2))
+
+||| Zips each element of this stream with the previous element wrapped into `Some`.
+||| The first element is zipped with `None`.
+export %inline
+zipWithPrevious : Stream f es o -> Stream f es (Maybe o, o)
+zipWithPrevious = mapAccumulate Nothing $ \m,vo => (Just vo, (m, vo))
+
+
+||| Emits the given separator between every pair of elements in the
+||| source stream.
+export
+intersperse : (sep : o) -> Stream f es o -> Stream f es o
+intersperse sep (S p) =
+  S $ uncons1 p >>= \case
+    Left _      => pure ()
+    Right (h,t) => cons [h] (mapChunks (>>= \v => [sep,v]) t)
+
+--------------------------------------------------------------------------------
+-- Zipping Streams
+--------------------------------------------------------------------------------
+
+0 ZipWithLeft : (List Type -> Type -> Type) -> List Type -> (i,o : Type) -> Type
+ZipWithLeft f es i o = List i -> Pull f i es () -> Pull f o es ()
+
+%inline
+adjLeg : (Pull f o es () -> Pull f p es ()) -> StepLeg f es o -> Pull f p es ()
+adjLeg f (SL p sc) = inScope sc (f p)
+
+zipWithImpl :
+     ZipWithLeft f es o q
+  -> ZipWithLeft f es p q
+  -> (o -> p -> q)
+  -> Stream f es o
+  -> Stream f es p
+  -> Stream f es q
+zipWithImpl k1 k2 fun (S os) (S ps) =
+  stream $ Prelude.do
+    sc           <- scope
+    Just (h1,t1) <- stepLeg (SL os sc) | Nothing => inScope sc (k2 [] ps)
+    Just (h2,t2) <- stepLeg (SL ps sc) | Nothing => adjLeg (k1 h1) t1
+    go h1 h2 t1 t2
+
+  where
+    go : List o -> List p -> StepLeg f es o -> StepLeg f es p -> Pull f q es ()
+    go h1 h2 t1 t2 =
+      assert_total $ case zipImpl [<] fun h1 h2 of
+        Z cs => do
+          output cs
+          Just (h3,t3) <- stepLeg t1 | Nothing => adjLeg (k2 []) t2
+          Just (h4,t4) <- stepLeg t2 | Nothing => adjLeg (k1 h3) t3
+          go h3 h4 t3 t4
+        ZL os cs => do
+          output cs
+          Just (h4,t4) <- stepLeg t2 | Nothing => adjLeg (k1 os) t1
+          go os h4 t1 t4
+        ZR ps cs => do
+          output cs
+          Just (h3,t3) <- stepLeg t1 | Nothing => adjLeg (k2 ps) t2
+          go h3 ps t3 t2
+
+||| Zips the elements of two streams, combining them via the given binary
+||| function.
+|||
+||| This terminates when the end of either branch is reached.
+export %inline
+zipWith : (o -> p -> q) -> Stream f es o -> Stream f es p -> Stream f es q
+zipWith = zipWithImpl (\_,_ => pure ()) (\_,_ => pure ())
+
+||| Convenience alias for `zipWith MkPair`
+export %inline
+zip : Stream f es o -> Stream f es p -> Stream f es (o,p)
+zip = zipWith MkPair
+
+||| Determinsitically zips elements with the specified function, terminating
+||| when the ends of both branches are reached naturally, padding the left
+||| branch with `pad1` and padding the right branch with `pad2` as necessary.
+export %inline
+zipAllWith :
+     (pad1 : o)
+  -> (pad2 : p)
+  -> (fund : o -> p -> q)
+  -> Stream f es o
+  -> Stream f es p
+  -> Stream f es q
+zipAllWith vo vp fun =
+  zipWithImpl
+    (\ho,to => output (flip fun vp <$> ho) >> mapOutput (flip fun vp) to)
+    (\hp,tp => output (fun vo <$> hp) >> mapOutput (fun vo) tp)
+    fun
+
+||| Determinsitically zips elements, terminating when the ends of both branches
+||| are reached naturally, padding the left or right branch
+||| as necessary.
+export %inline
+zipAll : o -> p -> Stream f es o -> Stream f es p -> Stream f es (o,p)
+zipAll vo vp = zipAllWith vo vp MkPair
+
+||| Deterministically interleaves elements, starting on the left,
+||| terminating when the end of either branch is reached naturally.
+export %inline
+interleave : Stream f es o -> Stream f es o -> Stream f es o
+interleave xs ys = zip xs ys >>= \(x,y) => emits [x,y]
+
+||| Deterministically interleaves elements, starting on the left,
+||| terminating when the ends of both branches are reached naturally.
+export
+interleaveAll : Stream f es o -> Stream f es o -> Stream f es o
+interleaveAll xs ys =
+  zipAll [] [] (map pure xs) (map pure ys) >>= \(l,r) => emits (l ++ r)
 
 --------------------------------------------------------------------------------
 -- Effects

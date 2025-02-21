@@ -648,26 +648,26 @@ any pred p =
 |||
 ||| Aborts as soon as the given accumulator function returns `Nothing`
 export
-scanChunksMay :
+scanChunksMaybe :
      s
   -> (s -> Maybe (List o -> (List p,s)))
   -> Pull f o es ()
   -> Pull f p es s
-scanChunksMay s1 f p =
+scanChunksMaybe s1 f p =
   assert_total $ case f s1 of
     Nothing => pure s1
     Just g  => uncons p >>= \case
       Left r      => pure s1
-      Right (v,p) => let (w,s2) := g v in cons w $ scanChunksMay s2 f p
+      Right (v,p) => let (w,s2) := g v in cons w $ scanChunksMaybe s2 f p
 
-||| Like `scanChunksMay` but will transform the whole output.
+||| Like `scanChunksMaybe` but will transform the whole output.
 export
 scanChunks :
      s
   -> (s -> List o -> (List p,s))
   -> Pull f o es ()
   -> Pull f p es s
-scanChunks s1 f = scanChunksMay s1 (Just . f)
+scanChunks s1 f = scanChunksMaybe s1 (Just . f)
 
 export
 unconsBind : Pull f o es () -> (List o -> Pull f p es ()) -> Pull f p es ()
