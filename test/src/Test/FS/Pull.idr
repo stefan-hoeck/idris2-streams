@@ -316,6 +316,19 @@ prop_find =
     runPull (find (> 10) (fromChunks vss) >>= emitBoth1) ===
       dropWhile (<= 10) (join vss)
 
+prop_foldChunks : Property
+prop_foldChunks =
+  property $ do
+    vss <- forAll byteChunks
+    runPull (foldChunks (the Bits8 0) (\n => (n+) . sum) (fromChunks vss) >>= output1) ===
+      [sum $ join vss]
+
+prop_fold : Property
+prop_fold =
+  property $ do
+    vss <- forAll byteChunks
+    runPull (fold 0 (+) (fromChunks vss) >>= output1) === [sum $ join vss]
+
 --------------------------------------------------------------------------------
 -- Group
 --------------------------------------------------------------------------------
@@ -362,4 +375,6 @@ props =
     , ("prop_peek1", prop_peek1)
     , ("prop_peek1rem", prop_peek1rem)
     , ("prop_find", prop_find)
+    , ("prop_foldChunks", prop_foldChunks)
+    , ("prop_fold", prop_fold)
     ]

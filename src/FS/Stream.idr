@@ -266,20 +266,62 @@ export %inline
 fold : p -> (p -> o -> p) -> Stream f es o -> Stream f es p
 fold v = foldChunks v . foldl
 
+||| Accumulates all values in a stream as their sum.
+export %inline
+sum : Num o => Stream f es o -> Stream f es o
+sum = fold 0 (+)
+
+||| Accumulates all values in a stream as their product.
+export %inline
+product : Num o => Stream f es o -> Stream f es o
+product = fold 1 (*)
+
+||| Maps and accumulates the values in a stream via a `Monoid`.
+|||
+||| Note: Unlike `appendMap`, this will always result in single-element stream
+export
+foldMap : Monoid p => (o -> p) -> Stream f es o -> Stream f es p
+foldMap g = foldChunks neutral (\v,vs => v <+> foldMap g vs)
+
+||| Accumulates the values in a stream via a `Monoid`.
+|||
+||| Note: Unlike `append`, this will always result in single-element stream
+export
+concat : Monoid p => Stream f es p -> Stream f es p
+concat = foldChunks neutral (\v,vs => v <+> concat vs)
+
 ||| Folds all inputs using the supplied binary operator,
-||| and emits a single-element stream, or the empty stream if
+||| emitting a single-element stream, or the empty stream if
 ||| the input is empty, or the never stream if the input is non-terminating.
 export
 fold1 : (o -> o -> o) -> Stream f es o -> Stream f es o
 fold1 g (S p) = S $ fold1 g p >>= maybe (pure ()) output1
 
-export
-foldMap : Monoid p => (o -> p) -> Stream f es o -> Stream f es p
-foldMap g = foldChunks neutral (\v,vs => v <+> foldMap g vs)
+||| Emits the largest value found in a stream.
+export %inline
+maximum : Ord o => Stream f es o -> Stream f es o
+maximum = fold1 max
 
-export
-concat : Monoid p => Stream f es p -> Stream f es p
-concat = foldChunks neutral (\v,vs => v <+> concat vs)
+||| Emits the smallest value found in a stream.
+export %inline
+minimum : Ord o => Stream f es o -> Stream f es o
+minimum = fold1 min
+
+||| Maps and accumulates the values in a stream via a `Semigroup`.
+|||
+||| Note: Unlike `concat`, this will return an empty stream if the input
+|||       is empty.
+export %inline
+append : Semigroup o => Stream f es o -> Stream f es o
+append = fold1 (<+>)
+
+||| Maps and accumulates the values in a stream via a `Semigroup`.
+|||
+||| Note: Unlike `foldMap`, this will return an empty stream if the input
+|||       is empty.
+export %inline
+appendMap : Semigroup p => (o -> p) -> Stream f es o -> Stream f es p
+appendMap f = append . map f
 
 ||| Emits `False` and halts as soon as a non-matching
 ||| element is received; or emits a single `True` value if it
