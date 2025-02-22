@@ -51,7 +51,7 @@ breakAtLastCodepoint post n (pre:<lst@(BS sz bv)) =
     Nothing => breakAtLastCodepoint (lst :: post) (n + size lst) pre
     Just (prel,postl,trailing) => case trailing <= n + size postl of
       True  => ([fastConcat $ pre <>> (lst::post)], [])
-      False => ([fastConcat $ pre <>> []], postl::post)
+      False => ([fastConcat $ pre <>> [prel]], postl::post)
 
 namespace UTF8
   ||| Converts the byte vectors emitted by a stream to byte vectors
