@@ -5,9 +5,11 @@ brief      = "Functional, effectful streaming with resource management"
 version    = 0.1.0
 sourcedir  = "src"
 depends    = base         >= 0.7.0
+           , bytestring
            , elin
 
 modules = FS.Internal.Chunk
+        , FS.Bytes
         , FS.Pull
         , FS.Scope
         , FS.Stream

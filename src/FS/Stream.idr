@@ -358,6 +358,19 @@ scanChunksMaybe :
   -> Stream f es p
 scanChunksMaybe s1 f = stream . ignore . scanChunksMaybe s1 f . pull
 
+||| Threads a stateful computation through all the chunks emitted by
+||| a stream, generating a final (possibly empty) chunk of values when
+||| the stream is exhausted.
+export %inline
+scanChunksFull :
+     (init : s)
+  -> (fun  : s -> List o -> (List p,s))
+  -> (end  : s -> List p)
+  -> Stream f es o
+  -> Stream f es p
+scanChunksFull init fun end (S pl) =
+  S $ scanChunks init fun pl >>= output . end
+
 ||| Like `scanChunksMaybe` but will transform the whole output.
 export %inline
 scanChunks : (init: s) -> (s -> List o -> (List p,s)) -> Stream f es o -> Stream f es p
