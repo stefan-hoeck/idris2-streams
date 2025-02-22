@@ -96,3 +96,27 @@ export
 chunked : (n : Nat) -> (0 p : IsSucc n) => List a -> List (List a)
 chunked _      []     = []
 chunked (S sz) (h::t) = chunkedGo [<] [<h] sz sz t
+
+export
+mapAccum : SnocList p -> (s -> o -> (s,p)) -> s -> List o -> (List p,s)
+mapAccum sx f s1 []        = (sx <>> [], s1)
+mapAccum sx f s1 (x :: xs) =
+  let (s2,vp) := f s1 x
+   in mapAccum (sx :< vp) f s2 xs
+
+--------------------------------------------------------------------------------
+-- Zipping
+--------------------------------------------------------------------------------
+
+public export
+data ZipRes : (a,b,c : Type) -> Type where
+  Z  : List c -> ZipRes a b c
+  ZL : List a -> List c -> ZipRes a b c
+  ZR : List b -> List c -> ZipRes a b c
+
+export
+zipImpl : SnocList c -> (a -> b -> c) -> List a -> List b -> ZipRes a b c
+zipImpl sx f (x::xs) (y::ys) = zipImpl (sx :< f x y) f xs ys
+zipImpl sx f [] [] = Z (sx <>> [])
+zipImpl sx f xs [] = ZL xs (sx <>> [])
+zipImpl sx f [] ys = ZR ys (sx <>> [])
