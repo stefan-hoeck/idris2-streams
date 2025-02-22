@@ -330,6 +330,34 @@ prop_padRight =
     [v,vss] <- forAll $ hlist [bytes, byteChunks]
     streamList (zipAll v v (fromChunks vss) neutral) === map (,v) (join vss)
 
+prop_zipWithIndex : Property
+prop_zipWithIndex =
+  property $ do
+    vss <- forAll byteChunks
+    streamList (zipWithIndex $ fromChunks vss) ===
+      (swap <$> zipWithIndex (join vss))
+
+prop_zipWithScan1 : Property
+prop_zipWithScan1 =
+  property $ do
+    vss <- forAll byteChunks
+    streamList (zipWithScan1 0 (\n,_ => S n) $ fromChunks vss) ===
+      ((\(n,v) => (v, S n)) <$> zipWithIndex (join vss))
+
+prop_zipWithPrevious : Property
+prop_zipWithPrevious =
+  property $ do
+    vss <- forAll byteChunks
+    let vs := join vss
+        tl := maybe [] ((Nothing ::) . map Just) (init' vs)
+    streamList (zipWithPrevious $ fromChunks vss) === zip tl vs
+
+prop_intersperse : Property
+prop_intersperse =
+  property $ do
+    [v,vss] <- forAll $ hlist [bytes, byteChunks]
+    streamList (intersperse v $ fromChunks vss) === intersperse v (join vss)
+
 --------------------------------------------------------------------------------
 -- Group
 --------------------------------------------------------------------------------
@@ -388,4 +416,8 @@ props =
     , ("prop_zipWith", prop_zipWith)
     , ("prop_padLeft", prop_padLeft)
     , ("prop_padRight", prop_padRight)
+    , ("prop_zipWithIndex", prop_zipWithIndex)
+    , ("prop_zipWithScan1", prop_zipWithScan1)
+    , ("prop_zipWithPrevious", prop_zipWithPrevious)
+    , ("prop_intersperse", prop_intersperse)
     ]
