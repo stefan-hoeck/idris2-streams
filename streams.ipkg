@@ -8,8 +8,10 @@ depends    = base         >= 0.7.0
            , bytestring
            , elin
 
-modules = FS.Internal.Chunk
-        , FS.Bytes
+modules = FS.Bytes
         , FS.Pull
         , FS.Scope
         , FS.Stream
+
+        , FS.Internal.Bytes
+        , FS.Internal.Chunk

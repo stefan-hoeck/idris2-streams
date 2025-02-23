@@ -1,57 +1,30 @@
 ||| Utilities for working with streams of byte arrays.
 module FS.Bytes
 
-import Data.Bits
-import Data.ByteString
+import public Data.ByteString
+
+import FS.Internal.Bytes
 import FS.Stream
 
 %default total
 
-||| The number of continuation bytes following a UTF-8 leading byte.
-|||
-||| See [Wikipedia](https://en.wikipedia.org/wiki/UTF-8#Description)
-||| for a description of the magic numbers used in the implementation
-||| and the UTF-8 encoding in general.
+||| Appends a newline character (`0x0a`) to every bytestring
+||| emitted by the stream.
 export
-continuationBytes : Bits8 -> Maybe Nat
-continuationBytes b =
-  -- we use binary notation for the magic constants to make
-  -- them easily comparable with the values in the table on Wikipedia
-  if      (b .&. 0b1000_0000) == 0b0000_0000 then Just 0
-  else if (b .&. 0b1110_0000) == 0b1100_0000 then Just 1
-  else if (b .&. 0b1111_0000) == 0b1110_0000 then Just 2
-  else if (b .&. 0b1111_1000) == 0b1111_0000 then Just 3
-  else                                            Nothing
+unlines : Stream f es ByteString -> Stream f es ByteString
+unlines = mapChunks (>>= \b => [b,nl])
 
--- splits a bytestring at the last UTF-8 leading byte.
-splitLeading :
-     {n : Nat}
-  -> (k : Nat)
-  -> ByteVect n
-  -> {auto 0 p : LTE k n}
-  -> Maybe (ByteString,ByteString,Nat)
-splitLeading 0     x = Nothing
-splitLeading (S k) x =
-  case continuationBytes (atNat x k) of
-    Nothing  => splitLeading k x
-    (Just y) => Just (BS _ $ take k x, BS _ $ drop k x, S y)
-
--- breaks a list of byte vectors at the last incomplete UTF-8 codepoint
--- The first list is a concatenation of all the complete UTF-8 strings,
--- while the second list contains the last incomplete codepoint (in case
--- of a valid UTF-8 string, the second list holds at most 3 bytes).
-breakAtLastCodepoint :
-     List ByteString
-  -> Nat
-  -> SnocList ByteString
-  -> (List ByteString, List ByteString)
-breakAtLastCodepoint post n [<]        = ([], post)
-breakAtLastCodepoint post n (pre:<lst@(BS sz bv)) =
-  case splitLeading sz bv of
-    Nothing => breakAtLastCodepoint (lst :: post) (n + size lst) pre
-    Just (prel,postl,trailing) => case trailing <= n + size postl of
-      True  => ([fastConcat $ pre <>> (lst::post)], [])
-      False => ([fastConcat $ pre <>> [prel]], postl::post)
+||| Breaks the bytes emitted by a byte stream along unix newline
+||| characters (`0x0a`).
+export
+lines : Stream f es ByteString -> Stream f es ByteString
+lines = scanChunksFull [<] (splitNL [<]) last
+  where
+    last : SnocBytes -> Bytes
+    last sx =
+      case fastConcat (sx <>> []) of
+        BS 0 _ => []
+        bs     => [bs]
 
 namespace UTF8
   ||| Converts the byte vectors emitted by a stream to byte vectors
@@ -64,7 +37,7 @@ namespace UTF8
   chunks =
     scanChunksFull
       []
-      (\pre,cur => breakAtLastCodepoint [] 0 $ [<] <>< (pre ++ cur))
+      (\pre,cur => UTF8.breakAtLastIncomplete [] 0 $ [<] <>< (pre ++ cur))
       (pure . fastConcat)
 
   ||| Cuts the byte vectors emitted by a stream at the end of whole
