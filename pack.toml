@@ -3,3 +3,8 @@ type   = "local"
 path   = "."
 ipkg   = "streams.ipkg"
 test   = "test/test.ipkg"
+
+[custom.all.streams-posix]
+type   = "local"
+path   = "posix"
+ipkg   = "streams-posix.ipkg"
