@@ -18,13 +18,11 @@ unlines = mapChunks (>>= \b => [b,nl])
 ||| characters (`0x0a`).
 export
 lines : Stream f es ByteString -> Stream f es ByteString
-lines = scanChunksFull [<] (splitNL [<]) last
+lines = scanChunksFull empty (splitNL [<]) last
   where
-    last : SnocBytes -> Bytes
-    last sx =
-      case fastConcat (sx <>> []) of
-        BS 0 _ => []
-        bs     => [bs]
+    last : ByteString -> Bytes
+    last (BS 0 _) = []
+    last bs       = [bs]
 
 namespace UTF8
   ||| Converts the byte vectors emitted by a stream to byte vectors

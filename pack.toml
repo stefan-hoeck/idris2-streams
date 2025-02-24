@@ -3,3 +3,32 @@ type   = "local"
 path   = "."
 ipkg   = "streams.ipkg"
 test   = "test/test.ipkg"
+
+[custom.all.streams-posix]
+type   = "local"
+path   = "posix"
+ipkg   = "streams-posix.ipkg"
+
+[custom.all.elin]
+type   = "git"
+url    = "https://github.com/stefan-hoeck/idris2-elin"
+commit = "latest:main"
+ipkg   = "elin.ipkg"
+
+[custom.all.ref1]
+type   = "git"
+url    = "https://github.com/stefan-hoeck/idris2-ref1"
+commit = "latest:main"
+ipkg   = "ref1.ipkg"
+
+[custom.all.posix]
+type   = "git"
+url    = "https://github.com/stefan-hoeck/idris2-linux"
+commit = "latest:main"
+ipkg   = "posix/posix.ipkg"
+
+[custom.all.linux]
+type   = "git"
+url    = "https://github.com/stefan-hoeck/idris2-linux"
+commit = "latest:main"
+ipkg   = "linux/linux.ipkg"

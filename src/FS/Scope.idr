@@ -7,6 +7,27 @@ import Data.SortedMap
 
 %default total
 
+export
+record ScopeID where
+  constructor SID
+  val : Nat
+
+export %inline
+RootID : ScopeID
+RootID = SID 0
+
+export %inline
+Eq ScopeID where
+  SID x == SID y = x == y
+
+export %inline
+Ord ScopeID where
+  compare (SID x) (SID y) = compare x y
+
+export %inline
+Show ScopeID where
+  show = show . val
+
 ||| Cancelation scopes
 |||
 ||| Functional streams are evaluated in scopes, which are organized as
@@ -23,59 +44,53 @@ public export
 record Scope (f : List Type -> Type -> Type) where
   constructor S
   ||| this scope's unique identifier
-  id        : Nat
+  id        : ScopeID
 
   ||| parent scopes `([parent, grand-parent, ... , root])`
-  ancestors : List Nat
+  ancestors : List ScopeID
 
   ||| optional cleanup hook for a resource allocated in this scope
-  cleanup   : Maybe (f [] ())
+  cleanup   : List (f [] ())
 
   ||| list of child scopes
-  children  : List Nat
+  children  : List ScopeID
 
 ||| The overall state of scopes.
 public export
 record ScopeST (f : List Type -> Type -> Type) where
   constructor SS
   index        : Nat
-  rootChildren : List Nat
-  scopes       : SortedMap Nat (Scope f)
+  scopes       : SortedMap ScopeID (Scope f)
 
 ||| Initial state of scopes.
 export
 empty : ScopeST f
-empty = SS 1 [] empty
+empty = SS 1 empty
+
+||| Returns the scope at the given scope ID.
+export %inline
+scopeAt : ScopeID -> ScopeST f -> Maybe (Scope f)
+scopeAt n = lookup n . scopes
 
 ||| There is always a `root` scope, which is the parent of
 ||| of all scopes.
 export %inline
 getRoot : ScopeST f -> Scope f
-getRoot ss = S 0 [] Nothing ss.rootChildren
-
-||| Returns the scope at the given scope ID.
-export %inline
-scopeAt : Nat -> ScopeST f -> Maybe (Scope f)
-scopeAt 0 ss = Just (getRoot ss)
-scopeAt n ss = lookup n ss.scopes
+getRoot = fromMaybe (S RootID [] [] []) . scopeAt RootID
 
 ||| Deletes the scope at the given scope ID.
 |||
 ||| When the scope in question is the root scope (ID 0),
 ||| only field `rootChildren` is reset to the empty list.
 export %inline
-deleteAt : Nat -> ScopeST f -> ScopeST f
-deleteAt 0 = {rootChildren := []}
+deleteAt : ScopeID -> ScopeST f -> ScopeST f
 deleteAt n = {scopes $= delete n}
 
 ||| Inserts a new scope. In case of the root scope, field
 ||| `rootChildren` is adjusted.
 export %inline
 insertScope : Scope f -> ScopeST f -> ScopeST f
-insertScope s =
-  case s.id of
-    0 => {rootChildren := s.children}
-    n => {scopes $= insert n s}
+insertScope s = {scopes $= insert s.id s}
 
 ||| Finds the closest ancestor scope that is still open.
 |||
@@ -85,7 +100,7 @@ export
 openAncestor : ScopeST f -> Scope f -> Scope f
 openAncestor ss = go . ancestors
   where
-    go : List Nat -> Scope f
+    go : List ScopeID -> Scope f
     go []        = getRoot ss
     go (x :: xs) = fromMaybe (go xs) (scopeAt x ss)
 
@@ -104,10 +119,10 @@ FScope f a = ScopeST f -> (ScopeST f, a)
 
 -- creates a new child scope with the given cleanup hook
 -- for the given parent scope.
-scope : Scope f -> Maybe (f [] ()) -> FScope f (Scope f)
-scope par cln ss =
+scope : Scope f -> FScope f (Scope f)
+scope par ss =
   let ancs := par.id :: par.ancestors
-      sc   := S ss.index ancs cln []
+      sc   := S (SID ss.index) ancs [] []
       par2 := {children $= (sc.id ::)} par
       ss2  := insertScope par2 $ insertScope sc ss
    in ({index $= S} ss2, sc)
@@ -127,22 +142,20 @@ parameters {0    f   : List Type -> Type -> Type}
   ||| If the parent scope has already been closed, its closest
   ||| open ancestor will be used as the new scope's parent instead.
   export
-  openScope : Scope f -> Maybe (f [] ()) -> f es (Scope f)
-  openScope par fin =
+  openScope : Scope f -> f es (Scope f)
+  openScope par =
     update ref $ \ss =>
-      scope (openSelfOrAncestor ss par) fin ss
+      scope (openSelfOrAncestor ss par) ss
 
   ||| Closes the scope of the given ID plus all its child scopes,
   ||| releasing all allocated resources in reverse order of allocation
   ||| along the way.
   export
-  close : Nat -> f [] ()
+  close : ScopeID -> f [] ()
 
-  closeAll : List Nat -> Maybe (f [] ()) -> f [] ()
-  closeAll []        Nothing   = pure ()
-  closeAll []        (Just cl) = cl
-  closeAll (x :: xs) cl        =
-    assert_total $ close x >> closeAll xs cl
+  closeAll : List ScopeID -> List (f [] ()) -> f [] ()
+  closeAll []        cl = sequence_ cl
+  closeAll (x :: xs) cl = assert_total $ close x >> closeAll xs cl
 
   close id = do
     act <- update ref $ \ss =>
@@ -153,5 +166,15 @@ parameters {0    f   : List Type -> Type -> Type}
 
   ||| Lookup the scope with the given ID.
   export %inline
-  findScope : Nat -> f es (Maybe $ Scope f)
+  findScope : ScopeID -> f es (Maybe $ Scope f)
   findScope id = lookup id . scopes <$> readref ref
+
+  ||| Adds a new cleanup hook to the given scope or its closest
+  ||| open parent scope.
+  export %inline
+  addHook : Scope f -> f [] () -> f es (Scope f)
+  addHook sc hook =
+    Ref1.update ref $ \ss =>
+     let res := {cleanup $= (hook ::)} (openSelfOrAncestor ss sc)
+      in (insertScope res ss, res)
+

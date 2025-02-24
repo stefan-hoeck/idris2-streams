@@ -138,16 +138,17 @@ data Pull :
   ||| Sequencing of `Pull`s via monadic bind `(>>=)`.
   Bind   : Pull f o es r -> (r -> Pull f o es s) -> Pull f o es s
 
-  ||| Safe resource management:
-  ||| Runs the given `Pull` in a new child scope, so that once it
-  ||| is run to completion, the given optional cleanup hook will be
-  ||| invoked.
-  OScope : Pull f o es r -> Maybe (f [] ()) -> Pull f o es r
+  ||| Runs the given `Pull` in a new child scope.
+  OScope : Pull f o es r -> Pull f o es r
+
+  ||| Safe resource management: Once the given resource has been acquired,
+  ||| it is released via the given cleanup hook once the current scope ends.
+  Acquire : f es r -> (r -> f [] ()) -> Pull f o es r
 
   ||| Internal: Evaluates the given `Pull` in the given inner scope as
   ||| long as it produces chunks of output. Switches back to the outer scope
   ||| once the `Pull` is exhausted.
-  WScope : Pull f o es r -> (inner, outer : Nat) -> Pull f o es r
+  WScope : Pull f o es r -> (inner, outer : ScopeID) -> Pull f o es r
 
   ||| Internal: A pull for returning the current scope
   GScope : Pull f o es (Scope f)
@@ -177,10 +178,12 @@ record StepLeg f es o where
 ||| handling.
 export %inline
 MErr (Pull f o) where
-  fail    = Err
-  succeed = Val
-  bind    = Bind
-  attempt = Att
+  fail        = Err
+  succeed     = Val
+  bind        = Bind
+  attempt     = Att
+  mapImpl f p = Bind p (Val . f)
+  appImpl f p = Bind f (`mapImpl` p)
 
 ||| In case the effect type of a pull has support for mutable state in
 ||| state thread `s`, so does the `Pull` itself.
@@ -330,6 +333,12 @@ scope = GScope
 export %inline
 inScope : Scope f -> Pull f o es r -> Pull f o es r
 inScope = IScope
+
+||| Acquires a resource that will be released once the current
+||| scope is cleaned up.
+export %inline
+acquire : (acq : f es r) -> (release : r -> f [] ()) -> Pull f o es r
+acquire = Acquire
 
 --------------------------------------------------------------------------------
 -- Combinators
@@ -746,9 +755,14 @@ parameters {0 f      : List Type -> Type -> Type}
       Done sc r  => step (g r) sc
       Out sc v p => pure $ Out sc v (Bind p g)
 
-  step (OScope p cl) sc =
-    openScope ref sc cl >>= \sc2 =>
+  step (OScope p) sc =
+    openScope ref sc >>= \sc2 =>
       step (WScope p sc2.id sc.id) sc2
+
+  step (Acquire alloc cleanup) sc = do
+    res <- alloc
+    sc2 <- addHook ref sc (cleanup res)
+    pure (Done sc2 res)
 
   step (WScope p id rs) sc = do
     (cur,closeAfterUse) <- maybe (sc,False) (,True) <$> findScope ref id

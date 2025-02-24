@@ -18,18 +18,22 @@ export
 nl : ByteString
 nl = singleton 0x0a
 
+
+ls : SnocBytes -> (n : Nat) -> ByteVect n -> (SnocBytes, ByteString)
+ls sb n bs = case breakNL bs of
+  MkBreakRes l1 0      b1 _  prf => (sb, BS l1 b1)
+  MkBreakRes l1 (S l2) b1 b2 prf =>
+    ls (sb :< BS l1 b1) (assert_smaller n l2) (tail b2)
+
 export
-splitNL : SnocBytes -> SnocBytes -> Bytes -> (Bytes, SnocBytes)
-splitNL sl sx []                  = (sl <>> [], sx)
-splitNL sl sx (x@(BS sz v) :: xs) =
-  assert_total $ case sz of
-    0 => splitNL sl sx xs
-    _ => case breakNL v of
-      MkBreakRes _  0      _  _  _ => splitNL sl (sx :< x) xs
-      MkBreakRes l1 (S l2) v1 v2 p =>
-       let line := fastConcat (sx <>> [BS l1 v1])
-           x2   := BS l2 (tail v2)
-        in splitNL (sl :< line) [<] (x2 :: xs)
+splitNL : SnocBytes -> ByteString -> Bytes -> (Bytes, ByteString)
+splitNL sx x [] = (sx <>> [], x)
+splitNL sx x (BS n bs :: bss) =
+  case breakNL bs of
+    MkBreakRes l1 0      b1 _  prf => splitNL sx (x <+> BS l1 b1) bss
+    MkBreakRes l1 (S l2) b1 b2 prf =>
+      let (sx2,x2) := ls (sx :< (x <+> BS l1 b1)) l2 (tail b2)
+       in splitNL sx2 x2 bss
 
 namespace UTF8
   ||| The number of continuation bytes following a UTF-8 leading byte.
