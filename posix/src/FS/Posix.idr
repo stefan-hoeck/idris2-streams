@@ -1,9 +1,7 @@
 module FS.Posix
 
-import Control.Monad.Elin
 import Data.String
 import FS.Pull
-import System
 import public FS.Bytes
 import public FS.Stream
 import public System.Posix.File
@@ -45,23 +43,3 @@ parameters {0    es  : List Type}
   appendFile : ToBuf r => String -> Stream f es r -> Stream f es ()
   appendFile path str =
     resource (openFile path append 0o666) $ \fd => writeTo fd str
-
-example : String -> Stream (Elin World) [Errno] ()
-example pth =
-     readBytes pth
-  |> lines
-  |> map size
-  |> zipWithIndex
-  |> fold (Z,Z) max
-  |> map ((++ "\n") . show)
-  |> writeTo Stdout
-
-covering
-run : String -> IO ()
-run pth = ignore $ runElinIO $ handle [stderrLn . interpolate] (Stream.run (example pth))
-
-covering
-main : IO ()
-main = do
-  _::pth::_ <- getArgs | _ => run "pack.toml"
-  run pth
