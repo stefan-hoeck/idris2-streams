@@ -9,6 +9,11 @@ type   = "local"
 path   = "posix"
 ipkg   = "streams-posix.ipkg"
 
+[custom.all.streams-docs]
+type   = "local"
+path   = "docs"
+ipkg   = "docs.ipkg"
+
 [custom.all.elin]
 type   = "git"
 url    = "https://github.com/stefan-hoeck/idris2-elin"

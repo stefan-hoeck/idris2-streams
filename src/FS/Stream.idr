@@ -201,6 +201,11 @@ export
 drop : Nat -> Stream f es o -> Stream f es o
 drop n (S p) = S $ drop n p >>= fromMaybe (pure ())
 
+||| Drops the first element of the input.
+export %inline
+tail : Stream f es o -> Stream f es o
+tail = drop 1
+
 ||| Drops values from a stream while the given predicate returns `True`,
 ||| then echoes the rest.
 export

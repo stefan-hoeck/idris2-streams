@@ -31,3 +31,7 @@ jobs:
         run: pack install streams
       - name: Test lib
         run: pack test streams
+      - name: Build posix lib
+        run: pack --no-prompt install streams-posix
+      - name: Build docs
+        run: pack --no-prompt install streams-docs

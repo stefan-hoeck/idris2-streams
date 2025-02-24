@@ -12,6 +12,7 @@ modules = FS.Bytes
         , FS.Pull
         , FS.Scope
         , FS.Stream
+        , FS.System
 
         , FS.Internal.Bytes
         , FS.Internal.Chunk

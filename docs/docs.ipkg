@@ -1,0 +1,9 @@
+package streams-docs
+
+authors    = "stefan-hoeck"
+version    = 0.1.0
+sourcedir  = "src"
+depends    = streams-posix
+
+executable = "streams-docs"
+main       = README
