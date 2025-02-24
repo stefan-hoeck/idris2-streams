@@ -1,5 +1,6 @@
 module FS.Stream
 
+import public Control.Monad.Resource
 import public Data.Linear.ELift1
 
 import Data.List
@@ -46,6 +47,8 @@ MErr (Stream f) where
   fail         = S . fail
   bind (S v) f = S $ bindOutput1 (pull . f) v
   attempt      = S . attemptOutput . pull
+  mapImpl f p  = S (mapOutput f p.pull)
+  appImpl f p  = bind f (`mapImpl` p)
 
 export %inline
 Semigroup (Stream f es o) where
@@ -140,7 +143,7 @@ iterate v f = S $ iterate v f
 
 export %inline
 stream : Pull f o es () -> Stream f es o
-stream p = S (OScope p Nothing)
+stream p = S (OScope p)
 
 export %inline
 scope : Stream f es o -> Stream f es o
@@ -524,10 +527,42 @@ export
 observe : (o -> f es ()) -> Stream f es o -> Stream f es o
 observe act stream = stream >>= \v => eval (act v) $> v
 
+||| Like `resource`, but acquires the resource in the current scope.
+export
+resourceWeak :
+     {auto res : Resource f r}
+  -> (acquire : f es r)
+  -> (r -> Stream f es o)
+  -> Stream f es o
+resourceWeak acq g = S (acquire acq cleanup >>= pull . g)
+
+||| Acquires a resource in a new scope, closing it once the scope is
+||| cleaned up.
 export %inline
-resource : (acquire : f es r) -> (release : r -> f [] ()) -> Stream f es r
-resource acq release =
-  S $ Eval acq >>= \res => OScope (output1 res) (Just $ release res)
+resource :
+     {auto res : Resource f r}
+  -> (acquire : f es r)
+  -> (r -> Stream f es o)
+  -> Stream f es o
+resource acq = stream . pull . resourceWeak acq
+
+export
+resourcesWeak :
+     {auto all : All (Resource f) rs}
+  -> (acquire : All (f es) rs)
+  -> (HList rs -> Stream f es o)
+  -> Stream f es o
+resourcesWeak @{_ :: _} (a::as) g =
+  resourceWeak a $ \r => resourcesWeak as (\res => g (r::res))
+resourcesWeak @{[]} [] g = g []
+
+export
+resources :
+     {auto all : All (Resource f) rs}
+  -> (acquire : All (f es) rs)
+  -> (HList rs -> Stream f es o)
+  -> Stream f es o
+resources acqs = stream . pull . resourcesWeak acqs
 
 --------------------------------------------------------------------------------
 -- Evaluating Streams
