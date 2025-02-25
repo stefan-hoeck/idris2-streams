@@ -2,6 +2,7 @@ module FS.Stream
 
 import public Control.Monad.Resource
 import public Data.Linear.ELift1
+import public FS.ChunkSize
 
 import Data.List
 import Data.Maybe
@@ -187,7 +188,7 @@ takeRight : (n : Nat) -> (0 p : IsSucc n) => Stream f es o -> Stream f es o
 takeRight n (S p) = S $ takeRight n p >>= output
 
 ||| Emits values until the given predicate returns `False`.
-export %inline
+export
 takeWhile : (o -> Bool) -> Stream f es o -> Stream f es o
 takeWhile pred = stream . ignore . takeWhile pred . pull
 
@@ -230,6 +231,11 @@ find pred (S p) =
 export %inline
 mapChunks : (List o -> List p) -> Stream f es o -> Stream f es p
 mapChunks f = S . mapChunks f . pull
+
+||| Chunk-wise maps the values produced by a stream
+export %inline
+mapChunksEval : (List o -> f es (List p)) -> Stream f es o -> Stream f es p
+mapChunksEval f = S . mapChunksEval f . pull
 
 ||| Emits only inputs which match the supplied predicate.
 export %inline

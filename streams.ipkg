@@ -9,6 +9,8 @@ depends    = base         >= 0.7.0
            , elin
 
 modules = FS.Bytes
+        , FS.Elin
+        , FS.ChunkSize
         , FS.Pull
         , FS.Scope
         , FS.Stream

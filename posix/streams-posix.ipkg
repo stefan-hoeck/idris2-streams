@@ -9,3 +9,4 @@ depends    = base         >= 0.7.0
            , posix
 
 modules = FS.Posix
+        , FS.Posix.Internal

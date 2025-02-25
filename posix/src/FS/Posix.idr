@@ -1,12 +1,22 @@
 module FS.Posix
 
 import Data.String
+import FS.Posix.Internal
 import FS.Pull
+
 import public FS.Bytes
 import public FS.Stream
 import public System.Posix.File
 
 %default total
+
+public export
+0 ToBytes : Type -> Type
+ToBytes a = Cast a ByteString
+
+export %inline
+[ShowToBytes] Show a => Cast a ByteString where
+  cast = fromString . show
 
 parameters {0    es  : List Type}
            {auto eli : ELift1 World f}
@@ -31,15 +41,23 @@ parameters {0    es  : List Type}
     resource (openFile path O_RDONLY 0) $ \fd => bytes fd 0xffff
 
   export
-  writeTo : ToBuf r => FileDesc a => a -> Stream f es r -> Stream f es ()
-  writeTo fd = (>>= eval . fwrite fd)
+  linesTo : ToBytes r => FileDesc a => a -> Stream f es r -> Stream f es ()
+  linesTo fd = mapChunksEval (writeLines fd)
 
   export
-  writeFile : ToBuf r => String -> Stream f es r -> Stream f es ()
+  printLnTo : Show r => FileDesc a => a -> Stream f es r -> Stream f es ()
+  printLnTo = linesTo @{ShowToBytes}
+
+  export
+  writeTo : ToBytes r => FileDesc a => a -> Stream f es r -> Stream f es ()
+  writeTo fd = mapChunksEval (writeAll fd)
+
+  export
+  writeFile : ToBytes r => String -> Stream f es r -> Stream f es ()
   writeFile path str =
     resource (openFile path create 0o666) $ \fd => writeTo fd str
 
   export
-  appendFile : ToBuf r => String -> Stream f es r -> Stream f es ()
+  appendFile : ToBytes r => String -> Stream f es r -> Stream f es ()
   appendFile path str =
     resource (openFile path append 0o666) $ \fd => writeTo fd str
