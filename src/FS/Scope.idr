@@ -38,6 +38,13 @@ Show ScopeID where
 ||| it's scope is cleaned up and all resources allocated in this scope
 ||| are released, including the resources of all child scope.
 |||
+||| In addition to (internal) cancelation, streams can be run concurrently,
+||| in which case the can be interrupted by an external event such as
+||| the exhaustion of a timer or the termination of another stream.
+||| At every evaluation step of a stream we check, if the current scope
+||| has been canceled. If this is the case, evaluation of the stream
+||| is aborted.
+|||
 ||| Just like `Pull`s and `Stream`s, a `Scope` is parameterized by its
 ||| effect type.
 public export
@@ -54,6 +61,10 @@ record Scope (f : List Type -> Type -> Type) where
 
   ||| list of child scopes
   children  : List ScopeID
+
+  ||| Returns `True` if this scope has been interrupted by an external
+  ||| event.
+  interrupted : Maybe (f [] Bool)
 
 ||| The overall state of scopes.
 public export
@@ -76,7 +87,7 @@ scopeAt n = lookup n . scopes
 ||| of all scopes.
 export %inline
 getRoot : ScopeST f -> Scope f
-getRoot = fromMaybe (S RootID [] [] []) . scopeAt RootID
+getRoot = fromMaybe (S RootID [] [] [] Nothing) . scopeAt RootID
 
 ||| Deletes the scope at the given scope ID.
 |||
@@ -119,13 +130,39 @@ FScope f a = ScopeST f -> (ScopeST f, a)
 
 -- creates a new child scope with the given cleanup hook
 -- for the given parent scope.
-scope : Scope f -> FScope f (Scope f)
-scope par ss =
+scope : Maybe (f [] Bool) -> Scope f -> FScope f (Scope f)
+scope check par ss =
   let ancs := par.id :: par.ancestors
-      sc   := S (SID ss.index) ancs [] []
+      sc   := S (SID ss.index) ancs [] [] check
       par2 := {children $= (sc.id ::)} par
       ss2  := insertScope par2 $ insertScope sc ss
    in ({index $= S} ss2, sc)
+
+parameters {0    f   : List Type -> Type -> Type}
+           {auto eff : ELift1 s f}
+
+  export
+  isInterrupted : Scope f -> f es Bool
+  isInterrupted sc =
+    case sc.interrupted of
+      Nothing => pure False
+      Just f  => weakenErrors f
+
+  memo : f [] Bool -> f es (Maybe $ f [] Bool)
+  memo check = do
+    flag <- newref False
+    pure $ Just $ do
+      False <- readref flag | True  => pure True
+      True  <- check        | False => pure False
+      writeref flag True
+      pure True
+
+  makeCheck : (c1,c2 : Maybe (f [] Bool)) -> f es (Maybe $ f [] Bool)
+  makeCheck (Just c1) (Just c2) =
+    memo $ c1 >>= \case
+      False => c2
+      True  => pure True
+  makeCheck c1        c2        = pure $ c1 <|> c2
 
 parameters {0    f   : List Type -> Type -> Type}
            {auto eff : ELift1 s f}
@@ -137,15 +174,18 @@ parameters {0    f   : List Type -> Type -> Type}
   root = getRoot <$> readref ref
 
   ||| Opens and returns a new child scope for the given parent
-  ||| scope and cleanup hook.
+  ||| scope.
+  |||
+  ||| The optional `Bool` effect is used for checking for interruption.
   |||
   ||| If the parent scope has already been closed, its closest
   ||| open ancestor will be used as the new scope's parent instead.
   export
-  openScope : Scope f -> f es (Scope f)
-  openScope par =
+  openScope : Maybe (f [] Bool) -> Scope f -> f es (Scope f)
+  openScope outerCheck par = do
+    check <- makeCheck outerCheck par.interrupted
     update ref $ \ss =>
-      scope (openSelfOrAncestor ss par) ss
+      scope check (openSelfOrAncestor ss par) ss
 
   ||| Closes the scope of the given ID plus all its child scopes,
   ||| releasing all allocated resources in reverse order of allocation

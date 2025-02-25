@@ -1,5 +1,6 @@
 module FS.Stream
 
+import public Control.Monad.MCancel
 import public Control.Monad.Resource
 import public Data.Linear.ELift1
 import public FS.ChunkSize
@@ -144,11 +145,16 @@ iterate v f = S $ iterate v f
 
 export %inline
 stream : Pull f o es () -> Stream f es o
-stream p = S (OScope p)
+stream p = S (OScope p Nothing)
 
 export %inline
 scope : Stream f es o -> Stream f es o
 scope = stream . pull
+
+||| Interrupts the given stream when the given check returns `True`.
+export %inline
+interruptible : f [] Bool -> Stream f es o -> Stream f es o
+interruptible check (S p) = S (OScope p $ Just check)
 
 --------------------------------------------------------------------------------
 -- Combinators
@@ -584,30 +590,38 @@ parameters {0 f       : List Type -> Type -> Type}
 
   ||| Chunk-wise accumulates the values emitted by a stream.
   export covering %inline
-  accumChunks : (init : a) -> (acc : a -> List o -> a) -> Stream f es o -> f es a
+  accumChunks :
+       (init : a)
+    -> (acc : a -> List o -> a)
+    -> Stream f es o
+    -> f [] (Outcome es a)
   accumChunks init acc = run . foldChunks init acc . pull
 
   ||| Accumulates the values emitted by a stream.
   export covering %inline
-  accum : (init : a) -> (acc : a -> o -> a) -> Stream f es o -> f es a
+  accum :
+       (init : a)
+    -> (acc : a -> o -> a)
+    -> Stream f es o
+    -> f [] (Outcome es a)
   accum init acc = run . fold init acc . pull
 
   ||| Accumulates the values emitted by a stream in a snoclist.
   export covering %inline
-  toSnoc : Stream f es o -> f es (SnocList o)
+  toSnoc : Stream f es o -> f [] (Outcome es $ SnocList o)
   toSnoc = accumChunks [<] (<><)
 
   ||| Accumulates the values emitted by a stream in a list.
   export covering %inline
-  toList : Stream f es o -> f es (List o)
-  toList = map (<>> []) . toSnoc
+  toList : Stream f es o -> f [] (Outcome es $ List o)
+  toList = map (map (<>> [])) . toSnoc
 
   ||| Accumulates the values emitted by a stream in a list.
   export covering %inline
-  toChunks : Stream f es o -> f es (List $ List o)
-  toChunks = map (<>> []) . accumChunks [<] (:<)
+  toChunks : Stream f es o -> f [] (Outcome es $ List $ List o)
+  toChunks = map (map (<>> [])) . accumChunks [<] (:<)
 
   ||| Runs a stream to completion, discarding all values it emits.
   export covering %inline
-  run : Stream f es () -> f es ()
-  run = accumChunks () (\_,_ => ())
+  run : Stream f [] () -> f [] ()
+  run = ignore . accumChunks () (\_,_ => ())

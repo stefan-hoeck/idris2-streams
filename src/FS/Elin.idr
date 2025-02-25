@@ -6,52 +6,52 @@ import FS.Pull
 
 %default total
 
+fromOutcome : Monoid a => Outcome [] a -> a
+fromOutcome (Succeeded res) = res
+fromOutcome Canceled        = neutral
+fromOutcome (Error err)     = absurd err
 
 ||| Runs a `Pull` to completion, collecting all output in a list.
 export covering
-pullListRes : (forall s . Pull (Elin s) o es ()) -> Result es (List o)
+pullListRes : (forall s . Pull (Elin s) o es ()) -> Outcome es (List o)
 pullListRes p = pullElin ((<>> []) <$> foldChunks [<] (<><) p)
 
 ||| Like `pullListRes`, but without the possibility of failure.
 export covering
 pullList : (forall s . Pull (Elin s) o [] ()) -> List o
-pullList p = either absurd id $ pullListRes p
+pullList p = fromOutcome $ pullListRes p
 
 ||| Runs a `Pull` to completion, collecting all chunks of output in a list.
 ||| This allows us to observe the chunk structure of a `Pull`.
 export covering
-pullChunkRes : (forall s . Pull (Elin s) o es ()) -> Result es (List $ List o)
+pullChunkRes : (forall s . Pull (Elin s) o es ()) -> Outcome es (List $ List o)
 pullChunkRes p = pullElin ((<>> []) <$> foldChunks [<] (:<) p)
 
 ||| Like `echunks`, but without the possibility of failure.
 export covering
 pullChunks : (forall s . Pull (Elin s) o [] ()) -> List (List o)
-pullChunks p = either absurd id $ pullChunkRes p
+pullChunks p = fromOutcome $ pullChunkRes p
 
 ||| Runs a `Stream` to completion, collecting all output in a list.
 export covering
-streamListRes : (forall s . Stream (Elin s) es o) -> Result es (List o)
-streamListRes p = runElin (toList p)
+streamListRes : (forall s . Stream (Elin s) es o) -> Outcome es (List o)
+streamListRes p = either absurd id $ runElin (toList p)
 
 ||| Like `streamListRes`, but without the possibility of failure.
 export covering
 streamList : (forall s . Stream (Elin s) [] o) -> List o
-streamList p = either absurd id $ streamListRes p
+streamList p = fromOutcome $ streamListRes p
 
 ||| Runs a `Stream` to completion, collecting all chunks of output in a list.
 ||| This allows us to observe the chunk structure of a `Stream`.
 export covering
-streamChunkRes : (forall s . Stream (Elin s) es o) -> Result es (List $ List o)
-streamChunkRes p = runElin (toChunks p)
+streamChunkRes : (forall s . Stream (Elin s) es o) -> Outcome es (List $ List o)
+streamChunkRes p = either absurd id $ runElin (toChunks p)
 
 ||| Like `echunks`, but without the possibility of failure.
 export covering
 streamChunks : (forall s . Stream (Elin s) [] o) -> List (List o)
-streamChunks p = either absurd id $ streamChunkRes p
-
-export covering
-testStream : Show o => (forall s . Stream (Elin s) [] o) -> IO ()
-testStream = printLn . streamList
+streamChunks p = fromOutcome $ streamChunkRes p
 
 export covering
 runIO : Stream (Elin World) [] () -> IO ()
