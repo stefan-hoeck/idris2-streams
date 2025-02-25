@@ -24,7 +24,7 @@ runProg prog = runIO (handle [eval . stderrLn . interpolate] prog)
 
 ## Streams of Data
 
-A `FS.Stream.Stream f es o` can be thought of as a possibly infinite
+An `FS.Stream.Stream f es o` can be thought of as a possibly infinite
 sequence of values of type `o`, the evaluation and generation of which
 happens in effect type `f`, and that might fail with one of the
 errors in `es` (a list of types). The API provided by `FS.Stream` is
@@ -69,6 +69,45 @@ list takes more than ten seconds and consumes about 2 GB of memory. It even
 completes with the limit set to one billion, while the corresponding
 list function runs out of memory (which is to be expected).
 
+### Streaming `IO`
+
+While having a versatile API for working with pure streams of values can be
+useful, the real use case for libraries such as this one is to stream data
+coming from and going to `IO` sources and sinks: Files, sockets, databases.
+
+Here's a second example, which reads a text file line by line and converts
+all numeric entries from degrees Fahrenheit to Celsius.
+
+```idris
+toCelsius : ByteString -> Double
+toCelsius bs =
+  case parseDouble bs of
+    Nothing => 0.0
+    Just f  => (f - 32.0) * (5.0/9.0)
+
+fahrenheit : Prog ()
+fahrenheit =
+     readBytes "resources/fahrenheit.txt"
+  |> lines
+  |> filterNot (\x => null (trim x) || isPrefixOf "//" x)
+  |> map toCelsius
+  |> printLnTo Stdout
+```
+
+The above will convert every line in file `resources/fahrenheit.txt`
+to Celsius, skipping empty lines and comments. This is already very
+convenience, but under the hood, it does so much more:
+
+* It performs error handling: When the file in question is not present
+  or can't be read, it will fail with an exception of type `Errno` and
+  print it to `stderr`.
+* If the file can be opened, it will be properly closed when the
+  stream of values has been exhausted.
+
+Here's an example that can potentially open thousands of files (given
+as command-line arguments) and emit their content as a stream of
+`ByteStrings`, which will then be processed one line at a time.
+
 ```idris
 -- Opens every file listed as a command-line arguments,
 -- streaming its content and cutting it into a stream
@@ -94,7 +133,7 @@ example2 =
 
 covering
 main : IO ()
-main = runProg example2
+main = runProg fahrenheit
 ```
 <!-- vi: filetype=idris2:syntax=markdown
 -->
