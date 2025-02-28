@@ -11,13 +11,13 @@ import FS.Stream
 ||| Appends a newline character (`0x0a`) to every bytestring
 ||| emitted by the stream.
 export
-unlines : Stream f es ByteString -> Stream f es ByteString
+unlines : Stream s f es ByteString -> Stream s f es ByteString
 unlines = mapChunks (>>= \b => [b,nl])
 
 ||| Breaks the bytes emitted by a byte stream along unix newline
 ||| characters (`0x0a`).
 export
-lines : Stream f es ByteString -> Stream f es ByteString
+lines : Stream s f es ByteString -> Stream s f es ByteString
 lines = scanChunksFull empty (splitNL [<]) last
   where
     last : ByteString -> Bytes
@@ -31,7 +31,7 @@ namespace UTF8
   ||| Note: Typically, this needs to be prefixed with the outer namespace:
   |||       `UTF8.chunks`
   export
-  chunks : Stream f es ByteString -> Stream f es ByteString
+  chunks : Stream s f es ByteString -> Stream s f es ByteString
   chunks =
     scanChunksFull
       []
@@ -44,7 +44,7 @@ namespace UTF8
   ||| Note: Typically, this needs to be prefixed with the outer namespace:
   |||       `UTF8.decode`
   export %inline
-  decode : Stream f es ByteString -> Stream f es String
+  decode : Stream s f es ByteString -> Stream s f es String
   decode = map toString . UTF8.chunks
 
   ||| Converts a stream of strings to UTF-8-encoded byte strings.
@@ -52,5 +52,5 @@ namespace UTF8
   ||| Note: Typically, this needs to be prefixed with the outer namespace:
   |||       `UTF8.encode`
   export %inline
-  encode : Stream f es String -> Stream f es ByteString
+  encode : Stream s f es String -> Stream s f es ByteString
   encode = map fromString
