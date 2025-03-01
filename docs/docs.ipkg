@@ -4,6 +4,9 @@ authors    = "stefan-hoeck"
 version    = 0.1.0
 sourcedir  = "src"
 depends    = streams-posix
+           , async-epoll
 
 executable = "streams-docs"
+modules    = README
+           , Concurrent
 main       = README

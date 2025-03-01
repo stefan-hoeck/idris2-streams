@@ -3,6 +3,7 @@ module FS.Scope
 import Data.Linear.Deferred
 import Data.Linear.ELift1
 import Data.Linear.Ref1
+import Data.Linear.Unique
 import Data.Maybe
 import Data.SortedMap
 
@@ -65,19 +66,15 @@ record Scope (s : Type) (f : List Type -> Type -> Type) where
 
   ||| The deferred value is set if this scope has been interrupted
   ||| by an external event
-  interrupted : Maybe (Deferred s ())
+  interrupted : Deferred s ()
 
 ||| The overall state of scopes.
 public export
 record ScopeST (s : Type) (f : List Type -> Type -> Type) where
   constructor SS
-  index        : Nat
-  scopes       : SortedMap ScopeID (Scope s f)
-
-||| Initial state of scopes.
-export
-empty : ScopeST s f
-empty = SS 1 empty
+  index         : Nat
+  rootInterrupt : Deferred s ()
+  scopes        : SortedMap ScopeID (Scope s f)
 
 ||| Returns the scope at the given scope ID.
 export %inline
@@ -88,7 +85,7 @@ scopeAt n = lookup n . scopes
 ||| of all scopes.
 export %inline
 getRoot : ScopeST s f -> Scope s f
-getRoot = fromMaybe (S RootID [] [] [] Nothing) . scopeAt RootID
+getRoot ss = fromMaybe (S RootID [] [] [] ss.rootInterrupt) (scopeAt RootID ss)
 
 ||| Deletes the scope at the given scope ID.
 |||
@@ -132,7 +129,7 @@ FScope s f a = ScopeST s f -> (ScopeST s f, a)
 -- creates a new child scope with the given cleanup hook
 -- for the given parent scope.
 scope :
-     Maybe (Deferred s ())
+     Deferred s ()
   -> List (f [] ())
   -> Scope s f
   -> FScope s f (Scope s f)
@@ -146,22 +143,28 @@ scope interrupted cleanup par ss =
 parameters {0    f   : List Type -> Type -> Type}
            {auto eff : ELift1 s f}
 
+  ||| Initial state of scopes.
+  export
+  empty : f es (ScopeST s f)
+  empty = do
+    def <- deferredOf ()
+    pure $ SS 1 def empty
+
   export
   isInterrupted : Scope s f -> f es Bool
-  isInterrupted sc =
-    case sc.interrupted of
-      Nothing => pure False
-      Just d  => map isJust (peekDeferred d)
+  isInterrupted sc = map isJust (peekDeferred sc.interrupted)
 
   makeCheck :
-       (c1,c2 : Maybe (Deferred s ()))
-    -> f es (Maybe $ Deferred s (), List (f [] ()))
-  makeCheck (Just c1) (Just c2) = do
+       (c1 : Deferred s ())
+    -> (c2 : Maybe (Deferred s ()))
+    -> f es (Deferred s (), List (f [] ()))
+  makeCheck c1 (Just c2) = do
     def <- deferredOf ()
-    cl1 <- lift1 (observeDeferred1 c1 (putDeferred1 def))
-    cl2 <- lift1 (observeDeferred1 c2 (putDeferred1 def))
-    pure (Just def, [lift1 cl2,lift1 cl1])
-  makeCheck c1        c2        = pure (c1 <|> c2, [])
+    tok <- token
+    lift1 (observeDeferred1 c1 tok (putDeferred1 def))
+    lift1 (observeDeferred1 c2 tok (putDeferred1 def))
+    pure (def, [unobserveDeferred c1 tok,unobserveDeferred c2 tok])
+  makeCheck c1 Nothing        = pure (c1, [])
 
 parameters {0    f   : List Type -> Type -> Type}
            {auto eff : ELift1 s f}
@@ -180,9 +183,9 @@ parameters {0    f   : List Type -> Type -> Type}
   ||| If the parent scope has already been closed, its closest
   ||| open ancestor will be used as the new scope's parent instead.
   export
-  openScope : Maybe (Deferred s ()) -> Scope s f -> f es (Scope s f)
+  openScope : (Maybe $ Deferred s ()) -> Scope s f -> f es (Scope s f)
   openScope outerCheck par = do
-    (check, cleanup) <- makeCheck outerCheck par.interrupted
+    (check, cleanup) <- makeCheck par.interrupted outerCheck
     update ref $ \ss =>
       scope check cleanup (openSelfOrAncestor ss par) ss
 

@@ -1,34 +1,58 @@
 module FS.Concurrent
 
+import Data.Linear.Deferred
 import Data.Linear.Ref1
+import Data.Maybe
+
 import FS.Pull
+import FS.Scope
 import IO.Async.Loop.TimerH
+
 import public FS.Stream
 import public IO.Async
 
-export
-interruptWhen :
-     Stream World (Async e) es o
-  -> Stream World (Async e) [] Bool
-  -> Stream World (Async e) es o
--- interruptWhen str stop =
---   force $ do
---     doneL <- newref False
---     doneR <- newref False
---     pure (watched doneL doneR)
---
---   where
---     watcher : (doneL, doneR : IORef Bool) -> Async e [] ()
---     watcher doneL doneR =
---       guarantee
---         (run $ ignore $ interruptRef doneL $ any id stop)
---         (writeref doneR True)
---
---     watched : (doneL, doneR : IORef Bool) -> Stream (Async e) es o
---     watched doneL doneR = S $ do
---       _ <- acquire (start $ watcher doneL doneR) (\_ => writeref doneL True)
---       pull (interruptRef doneR str)
+public export
+0 AsyncStream : Type -> List Type -> Type -> Type
+AsyncStream e = Stream World (Async e)
 
 export
-timeout : TimerH e => Clock Duration -> Stream World (Async e) es o -> Stream World (Async e) es o
-timeout dur str = str `interruptWhen` eval (sleep dur $> True)
+interruptEvals : Async e es (List o) -> AsyncStream e es o
+interruptEvals act =
+  S $ do
+    sc <- scope
+    pull $ evals (fromMaybe [] <$> race [act, await sc.interrupted $> []])
+
+export %inline
+interruptEval : Async e es o -> AsyncStream e es o
+interruptEval = interruptEvals . map pure
+
+export %inline
+sleep : TimerH e => Clock Duration -> AsyncStream e es ()
+sleep = interruptEval . sleep
+
+export
+interruptWhen :
+     AsyncStream e es o
+  -> AsyncStream e [] Bool
+  -> AsyncStream e es o
+interruptWhen str stop =
+  force $ do
+    doneL <- deferredOf ()
+    doneR <- deferredOf ()
+    pure (watched doneL doneR)
+
+  where
+    watcher : (doneL, doneR : Deferred World ()) -> Async e [] ()
+    watcher doneL doneR =
+      guarantee
+        (run $ ignore $ interruptOn doneL $ any id stop)
+        (putDeferred doneR ())
+
+    watched : (doneL, doneR : Deferred World ()) -> AsyncStream e es o
+    watched doneL doneR = S $ do
+      _ <- acquire (start $ watcher doneL doneR) (\f => putDeferred doneL () >> wait f)
+      pull (interruptOn doneR str)
+
+export
+timeout : TimerH e => Clock Duration -> AsyncStream e es o -> AsyncStream e es o
+timeout dur str = str `interruptWhen` (sleep dur $> True)

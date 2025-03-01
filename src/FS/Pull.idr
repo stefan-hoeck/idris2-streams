@@ -844,7 +844,8 @@ parameters {0 f      : List Type -> Type -> Type}
 export covering
 run : ELift1 s f => Pull s f Void es r -> f [] (Outcome es r)
 run p = do
-  ref <- newref Scope.empty
+  st  <- Scope.empty {es = []}
+  ref <- newref st
   sc  <- root {es = []} ref
   res <- attempt {fs = []} (loop ref p sc)
   close ref sc.id
