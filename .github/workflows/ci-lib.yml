@@ -28,9 +28,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
       - name: Build lib
-        run: pack install streams
+        run: pack --no-prompt install streams
       - name: Test lib
-        run: pack test streams
+        run: pack --no-prompt test streams
       - name: Build posix lib
         run: pack --no-prompt install streams-posix
       - name: Build docs
