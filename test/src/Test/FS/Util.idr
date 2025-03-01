@@ -1,11 +1,10 @@
 module Test.FS.Util
 
-import Control.Monad.Elin
+import public FS.Elin
+import public Hedgehog
 import Data.Linear.Ref1
 import FS.Internal.Chunk
 import FS.Pull
-import FS.Stream
-import public Hedgehog
 
 %default total
 
@@ -50,56 +49,6 @@ chunkedCS : ChunkSize -> List a -> List (List a)
 chunkedCS (CS sz) = chunked sz
 
 --------------------------------------------------------------------------------
--- Running Pulls and Streams
---------------------------------------------------------------------------------
-
-||| Runs a `Pull` to completion, collecting all output in a list.
-export covering
-pullListRes : (forall s . Pull (Elin s) o es ()) -> Result es (List o)
-pullListRes p = pullElin ((<>> []) <$> foldChunks [<] (<><) p)
-
-||| Like `pullListRes`, but without the possibility of failure.
-export covering
-pullList : (forall s . Pull (Elin s) o [] ()) -> List o
-pullList p = either absurd id $ pullListRes p
-
-||| Runs a `Pull` to completion, collecting all chunks of output in a list.
-||| This allows us to observe the chunk structure of a `Pull`.
-export covering
-pullChunkRes : (forall s . Pull (Elin s) o es ()) -> Result es (List $ List o)
-pullChunkRes p = pullElin ((<>> []) <$> foldChunks [<] (:<) p)
-
-||| Like `echunks`, but without the possibility of failure.
-export covering
-pullChunks : (forall s . Pull (Elin s) o [] ()) -> List (List o)
-pullChunks p = either absurd id $ pullChunkRes p
-
-||| Runs a `Stream` to completion, collecting all output in a list.
-export covering
-streamListRes : (forall s . Stream (Elin s) es o) -> Result es (List o)
-streamListRes p = runElin (toList p)
-
-||| Like `streamListRes`, but without the possibility of failure.
-export covering
-streamList : (forall s . Stream (Elin s) [] o) -> List o
-streamList p = either absurd id $ streamListRes p
-
-||| Runs a `Stream` to completion, collecting all chunks of output in a list.
-||| This allows us to observe the chunk structure of a `Stream`.
-export covering
-streamChunkRes : (forall s . Stream (Elin s) es o) -> Result es (List $ List o)
-streamChunkRes p = runElin (toChunks p)
-
-||| Like `echunks`, but without the possibility of failure.
-export covering
-streamChunks : (forall s . Stream (Elin s) [] o) -> List (List o)
-streamChunks p = either absurd id $ streamChunkRes p
-
-export covering
-testStream : Show o => (forall s . Stream (Elin s) [] o) -> IO ()
-testStream = printLn . streamList
-
---------------------------------------------------------------------------------
 -- List and Chunk Utilities
 --------------------------------------------------------------------------------
 
@@ -140,7 +89,7 @@ firstl vss =
 
 ||| Emits the first chunk of data in the given foldable (if any).
 export
-headOut : Foldable m => m (List o, Pull f o es ()) -> Pull f o es ()
+headOut : Foldable m => m (List o, Pull s f o es ()) -> Pull s f o es ()
 headOut ps =
   case toList ps of
     []          => pure ()
@@ -148,7 +97,7 @@ headOut ps =
 
 ||| Returns the first pull in the given foldable (if any).
 export
-tailOut : Foldable m => m (q, Pull f o es ()) -> Pull f o es ()
+tailOut : Foldable m => m (q, Pull s f o es ()) -> Pull s f o es ()
 tailOut ps =
   case toList ps of
     []          => pure ()
@@ -156,7 +105,7 @@ tailOut ps =
 
 ||| Emits the first value in the given foldable (if any).
 export
-headOut1 : Foldable m => m (o, Pull f o es ()) -> Pull f o es ()
+headOut1 : Foldable m => m (o, Pull s f o es ()) -> Pull s f o es ()
 headOut1 ps =
   case toList ps of
     []         => pure ()
@@ -164,25 +113,25 @@ headOut1 ps =
 
 ||| Returns the wrapped stream or the empty stream in case of a `Nothing`
 export
-orEmpty : Monoid r => Maybe (Pull f o e r) ->  Pull f o e r
+orEmpty : Monoid r => Maybe (Pull s f o e r) ->  Pull s f o e r
 orEmpty = fromMaybe (pure neutral)
 
 ||| Returns a stream that emits the wrapped values and remainder of
 ||| the stream.
 export
-emitBoth : Maybe (List o,Pull f o es ()) -> Pull f o es ()
+emitBoth : Maybe (List o,Pull s f o es ()) -> Pull s f o es ()
 emitBoth Nothing       = pure ()
 emitBoth (Just (v,vs)) = output v >> vs
 
 ||| Returns a stream that emits the wrapped value and remainder of
 ||| the stream.
 export
-emitBoth1 : Maybe (o,Pull f o es ()) -> Pull f o es ()
+emitBoth1 : Maybe (o,Pull s f o es ()) -> Pull s f o es ()
 emitBoth1 Nothing       = pure ()
 emitBoth1 (Just (v,vs)) = output1 v >> vs
 
 export
-evalFromList : ELift1 s f => List o -> Stream f es o
+evalFromList : ELift1 s f => List o -> Stream s f es o
 evalFromList vss = eval (newref vss) >>= unfoldEval . next
 
   where
@@ -193,7 +142,7 @@ evalFromList vss = eval (newref vss) >>= unfoldEval . next
       pure (Just h)
 
 export
-evalFromChunks : ELift1 s f => List (List o) -> Stream f es o
+evalFromChunks : ELift1 s f => List (List o) -> Stream s f es o
 evalFromChunks vss = eval (newref vss) >>= unfoldEvalChunk . next
 
   where
@@ -204,7 +153,7 @@ evalFromChunks vss = eval (newref vss) >>= unfoldEvalChunk . next
       pure (Just h)
 
 export
-zipIx1 : ELift1 s f => Stream f es o -> Stream f es (Nat,o)
+zipIx1 : ELift1 s f => Stream s f es o -> Stream s f es (Nat,o)
 zipIx1 str = eval (newref Z) >>= flip evalMap str . pair
   where
     pair : Ref s Nat -> o -> f es (Nat,o)
@@ -214,7 +163,7 @@ zipIx1 str = eval (newref Z) >>= flip evalMap str . pair
       pure (n, v)
 
 export
-zipIx : ELift1 s f => Stream f es o -> Stream f es (Nat,o)
+zipIx : ELift1 s f => Stream s f es o -> Stream s f es (Nat,o)
 zipIx str = eval (newref Z) >>= flip evalMapChunk str . traverse . pair
   where
     pair : Ref s Nat -> o -> f es (Nat,o)

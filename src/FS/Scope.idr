@@ -1,7 +1,9 @@
 module FS.Scope
 
+import Data.Linear.Deferred
 import Data.Linear.ELift1
 import Data.Linear.Ref1
+import Data.Linear.Unique
 import Data.Maybe
 import Data.SortedMap
 
@@ -38,10 +40,17 @@ Show ScopeID where
 ||| it's scope is cleaned up and all resources allocated in this scope
 ||| are released, including the resources of all child scope.
 |||
+||| In addition to (internal) cancelation, streams can be run concurrently,
+||| in which case the can be interrupted by an external event such as
+||| the exhaustion of a timer or the termination of another stream.
+||| At every evaluation step of a stream we check, if the current scope
+||| has been canceled. If this is the case, evaluation of the stream
+||| is aborted.
+|||
 ||| Just like `Pull`s and `Stream`s, a `Scope` is parameterized by its
 ||| effect type.
 public export
-record Scope (f : List Type -> Type -> Type) where
+record Scope (s : Type) (f : List Type -> Type -> Type) where
   constructor S
   ||| this scope's unique identifier
   id        : ScopeID
@@ -55,41 +64,41 @@ record Scope (f : List Type -> Type -> Type) where
   ||| list of child scopes
   children  : List ScopeID
 
+  ||| The deferred value is set if this scope has been interrupted
+  ||| by an external event
+  interrupted : Deferred s ()
+
 ||| The overall state of scopes.
 public export
-record ScopeST (f : List Type -> Type -> Type) where
+record ScopeST (s : Type) (f : List Type -> Type -> Type) where
   constructor SS
-  index        : Nat
-  scopes       : SortedMap ScopeID (Scope f)
-
-||| Initial state of scopes.
-export
-empty : ScopeST f
-empty = SS 1 empty
+  index         : Nat
+  rootInterrupt : Deferred s ()
+  scopes        : SortedMap ScopeID (Scope s f)
 
 ||| Returns the scope at the given scope ID.
 export %inline
-scopeAt : ScopeID -> ScopeST f -> Maybe (Scope f)
+scopeAt : ScopeID -> ScopeST s f -> Maybe (Scope s f)
 scopeAt n = lookup n . scopes
 
 ||| There is always a `root` scope, which is the parent of
 ||| of all scopes.
 export %inline
-getRoot : ScopeST f -> Scope f
-getRoot = fromMaybe (S RootID [] [] []) . scopeAt RootID
+getRoot : ScopeST s f -> Scope s f
+getRoot ss = fromMaybe (S RootID [] [] [] ss.rootInterrupt) (scopeAt RootID ss)
 
 ||| Deletes the scope at the given scope ID.
 |||
 ||| When the scope in question is the root scope (ID 0),
 ||| only field `rootChildren` is reset to the empty list.
 export %inline
-deleteAt : ScopeID -> ScopeST f -> ScopeST f
+deleteAt : ScopeID -> ScopeST s f -> ScopeST s f
 deleteAt n = {scopes $= delete n}
 
 ||| Inserts a new scope. In case of the root scope, field
 ||| `rootChildren` is adjusted.
 export %inline
-insertScope : Scope f -> ScopeST f -> ScopeST f
+insertScope : Scope s f -> ScopeST s f -> ScopeST s f
 insertScope s = {scopes $= insert s.id s}
 
 ||| Finds the closest ancestor scope that is still open.
@@ -97,10 +106,10 @@ insertScope s = {scopes $= insert s.id s}
 ||| Note: The `root` scope cannot be fully closed, so this will always
 |||       return a sope.
 export
-openAncestor : ScopeST f -> Scope f -> Scope f
+openAncestor : ScopeST s f -> Scope s f -> Scope s f
 openAncestor ss = go . ancestors
   where
-    go : List ScopeID -> Scope f
+    go : List ScopeID -> Scope s f
     go []        = getRoot ss
     go (x :: xs) = fromMaybe (go xs) (scopeAt x ss)
 
@@ -109,43 +118,76 @@ openAncestor ss = go . ancestors
 ||| Note: The `root` scope cannot be fully closed, so this will always
 |||       return a sope.
 export
-openSelfOrAncestor : ScopeST f -> Scope f -> Scope f
+openSelfOrAncestor : ScopeST s f -> Scope s f -> Scope s f
 openSelfOrAncestor ss sc =
   fromMaybe (openAncestor ss sc) (scopeAt sc.id ss)
 
 -- utility alias
-0 FScope : (f : List Type -> Type -> Type) -> Type -> Type
-FScope f a = ScopeST f -> (ScopeST f, a)
+0 FScope : (s : Type) -> (f : List Type -> Type -> Type) -> Type -> Type
+FScope s f a = ScopeST s f -> (ScopeST s f, a)
 
 -- creates a new child scope with the given cleanup hook
 -- for the given parent scope.
-scope : Scope f -> FScope f (Scope f)
-scope par ss =
+scope :
+     Deferred s ()
+  -> List (f [] ())
+  -> Scope s f
+  -> FScope s f (Scope s f)
+scope interrupted cleanup par ss =
   let ancs := par.id :: par.ancestors
-      sc   := S (SID ss.index) ancs [] []
+      sc   := S (SID ss.index) ancs cleanup [] interrupted
       par2 := {children $= (sc.id ::)} par
       ss2  := insertScope par2 $ insertScope sc ss
    in ({index $= S} ss2, sc)
 
 parameters {0    f   : List Type -> Type -> Type}
            {auto eff : ELift1 s f}
-           (ref      : Ref s (ScopeST f))
+
+  ||| Initial state of scopes.
+  export
+  empty : f es (ScopeST s f)
+  empty = do
+    def <- deferredOf ()
+    pure $ SS 1 def empty
+
+  export
+  isInterrupted : Scope s f -> f es Bool
+  isInterrupted sc = map isJust (peekDeferred sc.interrupted)
+
+  makeCheck :
+       (c1 : Deferred s ())
+    -> (c2 : Maybe (Deferred s ()))
+    -> f es (Deferred s (), List (f [] ()))
+  makeCheck c1 (Just c2) = do
+    def <- deferredOf ()
+    tok <- token
+    lift1 (observeDeferred1 c1 tok (putDeferred1 def))
+    lift1 (observeDeferred1 c2 tok (putDeferred1 def))
+    pure (def, [unobserveDeferred c1 tok,unobserveDeferred c2 tok])
+  makeCheck c1 Nothing        = pure (c1, [])
+
+parameters {0    f   : List Type -> Type -> Type}
+           {auto eff : ELift1 s f}
+           (ref      : Ref s (ScopeST s f))
 
   ||| Returns the current state of the root scope
   export %inline
-  root : f es (Scope f)
+  root : f es (Scope s f)
   root = getRoot <$> readref ref
 
   ||| Opens and returns a new child scope for the given parent
-  ||| scope and cleanup hook.
+  ||| scope.
+  |||
+  ||| The optional `Bool` effect is used for checking for interruption.
   |||
   ||| If the parent scope has already been closed, its closest
   ||| open ancestor will be used as the new scope's parent instead.
   export
-  openScope : Scope f -> f es (Scope f)
-  openScope par =
+  openScope : (Maybe $ Deferred s ()) -> Scope s f -> f es (Scope s f)
+  openScope outerCheck par = do
+    (check, cleanup) <- makeCheck par.interrupted outerCheck
     update ref $ \ss =>
-      scope (openSelfOrAncestor ss par) ss
+      scope check cleanup (openSelfOrAncestor ss par) ss
 
   ||| Closes the scope of the given ID plus all its child scopes,
   ||| releasing all allocated resources in reverse order of allocation
@@ -166,15 +208,14 @@ parameters {0    f   : List Type -> Type -> Type}
 
   ||| Lookup the scope with the given ID.
   export %inline
-  findScope : ScopeID -> f es (Maybe $ Scope f)
+  findScope : ScopeID -> f es (Maybe $ Scope s f)
   findScope id = lookup id . scopes <$> readref ref
 
   ||| Adds a new cleanup hook to the given scope or its closest
   ||| open parent scope.
   export %inline
-  addHook : Scope f -> f [] () -> f es (Scope f)
+  addHook : Scope s f -> f [] () -> f es (Scope s f)
   addHook sc hook =
     Ref1.update ref $ \ss =>
      let res := {cleanup $= (hook ::)} (openSelfOrAncestor ss sc)
       in (insertScope res ss, res)
-

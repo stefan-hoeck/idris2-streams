@@ -22,7 +22,7 @@ parameters {0    es  : List Type}
            {auto eli : ELift1 World f}
            {auto has : Has Errno es}
 
-  bytesPull : FileDesc a => a -> Bits32 -> Pull f ByteString es ()
+  bytesPull : FileDesc a => a -> Bits32 -> Pull World f ByteString es ()
   bytesPull fd buf =
     assert_total $ readres fd ByteString buf >>= \case
       Res res     => output1 res >> bytesPull fd buf
@@ -32,32 +32,32 @@ parameters {0    es  : List Type}
       EOI         => pure ()
 
   export %inline
-  bytes : FileDesc a => a -> Bits32 -> Stream f es ByteString
+  bytes : FileDesc a => a -> Bits32 -> Stream World f es ByteString
   bytes fd buf = S (bytesPull fd buf)
 
   export %inline
-  readBytes : String -> Stream f es ByteString
+  readBytes : String -> Stream World f es ByteString
   readBytes path =
     resource (openFile path O_RDONLY 0) $ \fd => bytes fd 0xffff
 
   export
-  linesTo : ToBytes r => FileDesc a => a -> Stream f es r -> Stream f es ()
+  linesTo : ToBytes r => FileDesc a => a -> Stream World f es r -> Stream World f es ()
   linesTo fd = mapChunksEval (writeLines fd)
 
   export
-  printLnTo : Show r => FileDesc a => a -> Stream f es r -> Stream f es ()
+  printLnTo : Show r => FileDesc a => a -> Stream World f es r -> Stream World f es ()
   printLnTo = linesTo @{ShowToBytes}
 
   export
-  writeTo : ToBytes r => FileDesc a => a -> Stream f es r -> Stream f es ()
+  writeTo : ToBytes r => FileDesc a => a -> Stream World f es r -> Stream World f es ()
   writeTo fd = mapChunksEval (writeAll fd)
 
   export
-  writeFile : ToBytes r => String -> Stream f es r -> Stream f es ()
+  writeFile : ToBytes r => String -> Stream World f es r -> Stream World f es ()
   writeFile path str =
     resource (openFile path create 0o666) $ \fd => writeTo fd str
 
   export
-  appendFile : ToBytes r => String -> Stream f es r -> Stream f es ()
+  appendFile : ToBytes r => String -> Stream World f es r -> Stream World f es ()
   appendFile path str =
     resource (openFile path append 0o666) $ \fd => writeTo fd str

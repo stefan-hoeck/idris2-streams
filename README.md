@@ -16,7 +16,7 @@ import FS.System
 %default total
 
 0 Prog : Type -> Type
-Prog = Stream (Elin World) [Errno]
+Prog = Stream World (Elin World) [Errno]
 
 runProg : Prog () -> IO ()
 runProg prog = runIO (handle [eval . stderrLn . interpolate] prog)
@@ -35,7 +35,7 @@ a monad, so that we can get streams of streams, which - just like with
 in sequence. Here's a very simple example:
 
 ```idris
-example : Stream f es Nat
+example : Stream s f es Nat
 example = iterate Z S |> takeWhile (< 10_000_000) |> sum
 ```
 
@@ -118,7 +118,7 @@ as command-line arguments) and emit their content as a stream of
 -- Resources are managed automatically: Every file is closed
 -- as soon as it has been exhausted, so this can be used to
 -- stream thousands of files.
-example2 : Stream (Elin World) [Errno] ()
+example2 : Prog ()
 example2 =
      tail args
   |> observe stdoutLn

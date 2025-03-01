@@ -43,3 +43,9 @@ type   = "git"
 url    = "https://github.com/stefan-hoeck/idris2-bytestring"
 commit = "latest:main"
 ipkg   = "bytestring.ipkg"
+
+[custom.all.async]
+type   = "git"
+url    = "https://github.com/stefan-hoeck/idris2-async"
+commit = "latest:main"
+ipkg   = "async.ipkg"
