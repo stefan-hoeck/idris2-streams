@@ -8,6 +8,7 @@ so we start with some imports and some utilities:
 ```idris
 module README
 
+import IO.Async.Loop.ThreadPool
 import FS.Elin as E
 import FS.Stream as S
 import FS.Posix
@@ -16,10 +17,12 @@ import FS.System
 %default total
 
 0 Prog : Type -> Type
-Prog = Stream World (Elin World) [Errno]
+Prog = AsyncStream Poll [Errno]
 
+covering
 runProg : Prog () -> IO ()
-runProg prog = runIO (handle [eval . stderrLn . interpolate] prog)
+runProg prog =
+  simpleApp $ run (handle [eval . stderrLn . interpolate] prog)
 ```
 
 ## Streams of Data
@@ -52,6 +55,7 @@ canonical one is to run it through an effectful sink, for instance, by
 logging the generated values to `stdout`:
 
 ```idris
+covering
 runExample : IO ()
 runExample = runProg (example |> printLnTo Stdout)
 ```
