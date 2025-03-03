@@ -64,16 +64,11 @@ record Scope (s : Type) (f : List Type -> Type -> Type) where
   ||| list of child scopes
   children  : List ScopeID
 
-  ||| The deferred value is set if this scope has been interrupted
-  ||| by an external event
-  interrupted : Deferred s ()
-
 ||| The overall state of scopes.
 public export
 record ScopeST (s : Type) (f : List Type -> Type -> Type) where
   constructor SS
   index         : Nat
-  rootInterrupt : Deferred s ()
   scopes        : SortedMap ScopeID (Scope s f)
 
 ||| Returns the scope at the given scope ID.
@@ -85,7 +80,7 @@ scopeAt n = lookup n . scopes
 ||| of all scopes.
 export %inline
 getRoot : ScopeST s f -> Scope s f
-getRoot ss = fromMaybe (S RootID [] [] [] ss.rootInterrupt) (scopeAt RootID ss)
+getRoot ss = fromMaybe (S RootID [] [] []) (scopeAt RootID ss)
 
 ||| Deletes the scope at the given scope ID.
 |||
@@ -128,14 +123,10 @@ FScope s f a = ScopeST s f -> (ScopeST s f, a)
 
 -- creates a new child scope with the given cleanup hook
 -- for the given parent scope.
-scope :
-     Deferred s ()
-  -> List (f [] ())
-  -> Scope s f
-  -> FScope s f (Scope s f)
-scope interrupted cleanup par ss =
+scope : List (f [] ()) -> Scope s f -> FScope s f (Scope s f)
+scope cleanup par ss =
   let ancs := par.id :: par.ancestors
-      sc   := S (SID ss.index) ancs cleanup [] interrupted
+      sc   := S (SID ss.index) ancs cleanup []
       par2 := {children $= (sc.id ::)} par
       ss2  := insertScope par2 $ insertScope sc ss
    in ({index $= S} ss2, sc)
@@ -146,25 +137,7 @@ parameters {0    f   : List Type -> Type -> Type}
   ||| Initial state of scopes.
   export
   empty : f es (ScopeST s f)
-  empty = do
-    def <- deferredOf ()
-    pure $ SS 1 def empty
-
-  export
-  isInterrupted : Scope s f -> f es Bool
-  isInterrupted sc = map isJust (peekDeferred sc.interrupted)
-
-  makeCheck :
-       (c1 : Deferred s ())
-    -> (c2 : Maybe (Deferred s ()))
-    -> f es (Deferred s (), List (f [] ()))
-  makeCheck c1 (Just c2) = do
-    def <- deferredOf ()
-    tok <- token
-    lift1 (observeDeferred1 c1 tok (putDeferred1 def))
-    lift1 (observeDeferred1 c2 tok (putDeferred1 def))
-    pure (def, [unobserveDeferred c1 tok,unobserveDeferred c2 tok])
-  makeCheck c1 Nothing        = pure (c1, [])
+  empty = pure $ SS 1 empty
 
 parameters {0    f   : List Type -> Type -> Type}
            {auto eff : ELift1 s f}
@@ -183,11 +156,10 @@ parameters {0    f   : List Type -> Type -> Type}
   ||| If the parent scope has already been closed, its closest
   ||| open ancestor will be used as the new scope's parent instead.
   export
-  openScope : (Maybe $ Deferred s ()) -> Scope s f -> f es (Scope s f)
-  openScope outerCheck par = do
-    (check, cleanup) <- makeCheck par.interrupted outerCheck
+  openScope : Scope s f -> f es (Scope s f)
+  openScope par = do
     update ref $ \ss =>
-      scope check cleanup (openSelfOrAncestor ss par) ss
+      scope [] (openSelfOrAncestor ss par) ss
 
   ||| Closes the scope of the given ID plus all its child scopes,
   ||| releasing all allocated resources in reverse order of allocation

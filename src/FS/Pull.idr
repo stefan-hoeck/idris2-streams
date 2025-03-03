@@ -14,6 +14,8 @@ import Data.Nat
 import FS.Internal.Chunk
 import FS.Scope
 
+import IO.Async
+
 %default total
 
 --------------------------------------------------------------------------------
@@ -109,7 +111,7 @@ data Pull :
 
   ||| Runs the given `Pull` in a new child scope. The optional second argument
   ||| is used to check, if the scope has been interrupted.
-  OScope : Pull s f o es r -> Maybe (Deferred s ()) -> Pull s f o es r
+  OScope : Pull s f o es r -> Pull s f o es r
 
   ||| Safe resource management: Once the given resource has been acquired,
   ||| it is released via the given cleanup hook once the current scope ends.
@@ -130,6 +132,17 @@ data Pull :
   ||| the resources of the second pull to be release early when the first once
   ||| is exhausted. See `stepLeg` and `StepLeg`.
   IScope : Scope s f -> Pull s f o es r -> Pull s f o es r
+
+  ||| Interrupts evaluation of the given `Pull` as soon as
+  ||| the given `Deferred` is set.
+  |||
+  ||| This is only available in the `Async` monad because it
+  ||| it involves racing stream evaluation against reading the
+  ||| deferred value.
+  Till   :
+       Deferred World ()
+    -> Pull World (Async e) o es ()
+    -> Pull World (Async e) o es ()
 
 ||| A (partially evaluated) `Pull` plus the scope it should be
 ||| evaluated in.
@@ -186,7 +199,7 @@ foldable = output . toList
 ||| This allows us to potentially emit a bunch of values right before
 ||| we are done.
 export
-unfoldChunk : (init : st) -> (st -> (List o, Either r st)) -> Pull s f o es r
+unfoldChunk : (init : x) -> (x -> (List o, Either r x)) -> Pull s f o es r
 unfoldChunk init g =
   assert_total $ case g init of
     (os, Left r)   => output os $> r
@@ -194,12 +207,12 @@ unfoldChunk init g =
 
 ||| Emits values until the given generator function returns a `Left`
 export %inline
-unfold : ChunkSize => (init : st) -> (st -> Either r (o,st)) -> Pull s f o es r
+unfold : ChunkSize => (init : x) -> (x -> Either r (o,x)) -> Pull s f o es r
 unfold @{CS n} init g = unfoldChunk init (unfoldImpl [<] n g)
 
 ||| Like `unfoldMaybe` but emits values in chunks.
 export
-unfoldChunkMaybe : (init : st) -> (st -> (List o, Maybe st)) -> Pull s f o es ()
+unfoldChunkMaybe : (init : x) -> (x -> (List o, Maybe x)) -> Pull s f o es ()
 unfoldChunkMaybe init g =
   let (os,ms) := g init
    in case ms of
@@ -217,7 +230,7 @@ fromChunks vss =
 
 ||| Like `unfold` but does not produce an interesting result.
 export %inline
-unfoldMaybe : ChunkSize => (init : st) -> (st -> Maybe (o,st)) -> Pull s f o es ()
+unfoldMaybe : ChunkSize => (init : x) -> (x -> Maybe (o,x)) -> Pull s f o es ()
 unfoldMaybe @{CS n} init g = unfoldChunkMaybe init (unfoldMaybeImpl [<] n g)
 
 ||| Like `unfold` but produces values via an effectful computation
@@ -644,10 +657,10 @@ any pred p =
 ||| Aborts as soon as the given accumulator function returns `Nothing`
 export
 scanChunksMaybe :
-     st
-  -> (st -> Maybe (List o -> (List p,st)))
+     x
+  -> (x -> Maybe (List o -> (List p,x)))
   -> Pull s f o es ()
-  -> Pull s f p es st
+  -> Pull s f p es x
 scanChunksMaybe s1 f p =
   assert_total $ case f s1 of
     Nothing => pure s1
@@ -658,10 +671,10 @@ scanChunksMaybe s1 f p =
 ||| Like `scanChunksMaybe` but will transform the whole output.
 export
 scanChunks :
-     st
-  -> (st -> List o -> (List p,st))
+     x
+  -> (x -> List o -> (List p,x))
   -> Pull s f o es ()
-  -> Pull s f p es st
+  -> Pull s f p es x
 scanChunks s1 f = scanChunksMaybe s1 (Just . f)
 
 export
@@ -713,9 +726,6 @@ data StepRes :
   ||| Stream produced some output
   Out  : (ss : Scope s f) -> (chunk : List o) -> Pull s f o es r -> StepRes s f o es r
 
-  ||| Stream was interrupted
-  End  : (ss : Scope s f) -> StepRes s f o es r
-
 parameters {0 f      : List Type -> Type -> Type}
            {auto eff : ELift1 s f}
            (ref      : Ref s (ScopeST s f))
@@ -724,15 +734,13 @@ parameters {0 f      : List Type -> Type -> Type}
   |||
   ||| Either returns the final result or the next chunk of output
   ||| paired with the remainder of the `Pull`. Fails with an error in
-  ||| case of an uncaught exception. Returns `End` in case the current
-  ||| scope was interrupted.
+  ||| case of an uncaught exception
   -- Implementation note: This is a pattern match on the different
   -- data constructors of `Pull`. The `Scope` argument is the resource
   -- scope we are currently working with.
   export covering
   step : Pull s f o es r -> Scope s f -> f es (StepRes s f o es r)
-  step p sc = do
-    False <- isInterrupted sc | True => pure (End sc)
+  step p sc =
     case p of
       -- We got a final result, so we just return it.
       Val res    => pure (Done sc res)
@@ -751,12 +759,11 @@ parameters {0 f      : List Type -> Type -> Type}
       -- We step the wrapped pull. In case it produces some output,
       -- we wrap the output and continuation in a `Done . Right`. In case
       -- it is exhausted (produces an `Out res` we wrap the `res` in
-      -- a `Done . Left`. In case it was interrupted, we pass on the `End sc`.
+      -- a `Done . Left`.
       Uncons p   =>
         step p sc >>= \case
           Done sc res     => pure (Done sc $ Left res)
           Out  sc chunk x => pure (Done sc $ Right (chunk, x))
-          End sc          => pure (End sc)
 
       -- We try and step the wrapped pull. In case of an error, we wrap
       -- it in a `Done . Left`. In case of a final result, we return the
@@ -770,7 +777,6 @@ parameters {0 f      : List Type -> Type -> Type}
           Right y => case y of
             Done ss res    => pure (Done ss $ Right res)
             Out ss chunk z => pure (Out ss chunk (Att z))
-            End ss         => pure (End ss)
 
       -- Monadic bind: We step the wrapped pull, passing the final result
       -- to function `g`. In case of some output being emitted, we return
@@ -780,12 +786,21 @@ parameters {0 f      : List Type -> Type -> Type}
         step x sc >>= \case
           Done sc r  => step (g r) sc
           Out sc v p => pure $ Out sc v (Bind p g)
-          End sc     => pure (End sc)
+
+      -- Race completion of the `deferred` value against evaluating
+      -- the given pull. Currently, if the race is canceled, this
+      -- is treated as the pull being interrupted.
+      Till def p =>
+        race2 (step p sc) (await def) >>= \case
+          Just (Left v) => case v of
+            Done ss res    => pure (Done ss res)
+            Out ss chunk x => pure (Out ss chunk (Till def x))
+          _                => pure (Done sc ())
 
       -- Runs pull in a new child scope. The scope is setup and registered,
       -- and the result wrapped in a `WScope`.
-      OScope p ir =>
-        openScope ref ir sc >>= \sc2 =>
+      OScope p =>
+        openScope ref sc >>= \sc2 =>
           step (WScope p sc2.id sc.id) sc2
 
       -- Acquires some resource in the current scope and adds its
@@ -808,10 +823,6 @@ parameters {0 f      : List Type -> Type -> Type}
         -- we close `cur` (if `closeAfterUse` equals `True`).
         attempt (step p cur) >>= \case
           Right (Out scope hd tl) => pure (Out scope hd $ WScope tl id rs)
-          Right (End outScope)    => do
-            nextScope <- fromMaybe outScope <$> findScope ref rs
-            when closeAfterUse (weakenErrors $ close ref cur.id)
-            pure $ End nextScope
           Right (Done outScope r) => do
             nextScope <- fromMaybe outScope <$> findScope ref rs
             when closeAfterUse (weakenErrors $ close ref cur.id)
@@ -831,7 +842,6 @@ parameters {0 f      : List Type -> Type -> Type}
   loop p sc =
     step p sc >>= \case
       Done _ v       => pure (Just v)
-      End  _         => pure Nothing
       Out  sc2 [] p2 => loop p2 sc2
 
 ||| Runs a `Pull` to completion, eventually producing
