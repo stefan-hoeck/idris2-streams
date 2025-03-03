@@ -30,9 +30,9 @@ parameters {0    es  : List Type}
 
   bytesPull : FileDesc a => a -> Bits32 -> AsyncPull e ByteString es ()
   bytesPull fd buf =
-    assert_total $ interruptPull (toList <$> readnb fd _ buf) >>= \case
-      [] => pure ()
-      bs => output bs >> bytesPull fd buf
+    assert_total $ Eval (readnb fd _ buf) >>= \case
+      BS 0 _ => pure ()
+      bs     => output1 bs >> bytesPull fd buf
 
   export %inline
   bytes : FileDesc a => a -> Bits32 -> AsyncStream e es ByteString

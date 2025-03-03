@@ -66,6 +66,10 @@ export %inline
 ELift1 s f => ELift1 s (Stream s f) where
   elift1 act = S (elift1 act >>= output1)
 
+export %inline
+ELift1 World f => HasIO (Stream World f es) where
+  liftIO act = lift1 (ioToF1 act)
+
 --------------------------------------------------------------------------------
 -- Creating Streams
 --------------------------------------------------------------------------------
@@ -152,16 +156,11 @@ iterate v f = S $ iterate v f
 
 export %inline
 stream : Pull s f o es () -> Stream s f es o
-stream p = S (OScope p Nothing)
+stream p = S (OScope p)
 
 export %inline
 scope : Stream s f es o -> Stream s f es o
 scope = stream . pull
-
-||| Interrupts the given stream when the given check returns `True`.
-export %inline
-interruptOn : Deferred s () ->  Stream s f es o -> Stream s f es o
-interruptOn check (S p) = S (OScope p $ Just check)
 
 --------------------------------------------------------------------------------
 -- Combinators
