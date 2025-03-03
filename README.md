@@ -8,7 +8,7 @@ so we start with some imports and some utilities:
 ```idris
 module README
 
-import IO.Async.Loop.ThreadPool
+import IO.Async.Loop.Posix
 import FS.Elin as E
 import FS.Stream as S
 import FS.Posix

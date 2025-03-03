@@ -3,7 +3,7 @@
 ```idris
 module Concurrent
 
-import IO.Async.Loop.ThreadPool
+import IO.Async.Loop.Posix
 import FS.Stream as S
 import FS.Posix
 import FS.System
