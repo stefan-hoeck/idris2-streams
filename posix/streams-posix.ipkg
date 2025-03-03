@@ -6,7 +6,7 @@ version    = 0.1.0
 sourcedir  = "src"
 depends    = base         >= 0.7.0
            , streams
-           , posix
+           , async-posix
 
 modules = FS.Posix
         , FS.Posix.Internal

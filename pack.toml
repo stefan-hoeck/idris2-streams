@@ -49,3 +49,9 @@ type   = "git"
 url    = "https://github.com/stefan-hoeck/idris2-async"
 commit = "latest:main"
 ipkg   = "async.ipkg"
+
+[custom.all.async-posix]
+type   = "git"
+url    = "https://github.com/stefan-hoeck/idris2-async"
+commit = "latest:main"
+ipkg   = "async-posix/async-posix.ipkg"
