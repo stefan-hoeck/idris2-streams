@@ -3,6 +3,7 @@
 ```idris
 module Concurrent
 
+import Data.FilePath
 import Data.String
 
 import IO.Async.Loop.Posix
@@ -60,9 +61,21 @@ prog3 =
   |> timeout 10.s
   |> linesTo Stdout
 
+prettyEntry : Entry Rel -> String
+prettyEntry (E path type stats) = "\{path}: \{show type}"
+
+idrisLines : Prog [Errno] ()
+idrisLines =
+     deepEntries (PRel [<])
+  |> filter (regularExt "idr")
+  |> (>>= content)
+  |> lines
+  |> fold Z (const . S)
+  |> printLnTo Stdout
+
 covering
 main : IO ()
-main = runProg prog3
+main = runProg idrisLines
 ```
 
 <!-- vi: filetype=idris2:syntax=markdown

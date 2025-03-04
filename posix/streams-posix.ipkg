@@ -5,8 +5,9 @@ brief      = "Streams on top of the posix API"
 version    = 0.1.0
 sourcedir  = "src"
 depends    = base         >= 0.7.0
-           , streams
            , async-posix
+           , filepath
+           , streams
 
 modules = FS.Posix
         , FS.Posix.Internal
