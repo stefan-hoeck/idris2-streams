@@ -66,6 +66,15 @@ takeWhileImpl tf sx f (x :: xs) =
   else if tf  then Just (sx <>> [x], xs)
   else             Just (sx <>> [], x::xs)
 
+||| Used for implementing `FS.Pull.takeWhileJust`
+export
+takeWhileJustImpl : SnocList o -> List (Maybe o) -> (List o,List $ Maybe o)
+takeWhileJustImpl sx []        = (sx <>> [], [])
+takeWhileJustImpl sx (x :: xs) =
+  case x of
+    Nothing => (sx <>> [], Nothing :: xs)
+    Just v  => takeWhileJustImpl (sx :< v) xs
+
 ||| Used for implementing `FS.Pull.dropWhile` and `FS.Pull.dropThrough`
 export
 dropWhileImpl : (o -> Bool) -> List o -> List o

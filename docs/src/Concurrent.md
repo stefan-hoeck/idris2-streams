@@ -3,6 +3,8 @@
 ```idris
 module Concurrent
 
+import Data.String
+
 import IO.Async.Loop.Posix
 import FS.Stream as S
 import FS.Posix
@@ -21,7 +23,7 @@ runProg prog =
 
 ```idris
 counter : Prog es Nat
-counter = mapAccumulate 0 (\n,_ => (S n, n)) $ repeat (sleep 10.ms)
+counter = count $ repeat (sleep 10.ms)
 
 done : Prog es Bool
 done = sleep 5.s $> True
@@ -37,9 +39,29 @@ prog2 = ignore (takeWhile (not . null) (repeat ask)) <+> stdoutLn "Time's up! Go
       stdoutLn "Please enter your name:"
       take 1 $ timeout 5.s (lines $ bytes Stdin 0xff) <+> pure empty
 
+record Tick where
+  constructor T
+  ix      : Nat
+  counter : Nat
+
+pretty: (Tick, Nat) -> String
+pretty (T ix c, tot) =
+  "Stream: \{show ix}; Count: \{padLeft 3 ' ' $ show c}; Total: \{padLeft 3 ' ' $ show tot}"
+
+tick : Nat -> Clock Duration -> Prog [Errno] Tick
+tick ix dur = T ix <$> count (repeat $ sleep dur)
+
+prog3 : Prog [Errno] ()
+prog3 =
+     merge [ tick 1 100.ms, tick 2 700.ms, tick 3 1500.ms, tick 4 300.ms]
+  |> zipWithIndex
+  |> map pretty
+  |> take 1000
+  |> linesTo Stdout
+
 covering
 main : IO ()
-main = runProg prog2
+main = runProg prog3
 ```
 
 <!-- vi: filetype=idris2:syntax=markdown

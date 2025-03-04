@@ -209,6 +209,11 @@ export %inline
 takeThrough : (o -> Bool) -> Stream s f es o -> Stream s f es o
 takeThrough pred = stream . ignore . takeThrough pred . pull
 
+||| Emits values until the first `Nothing` is encountered.
+export
+takeWhileJust : Stream s f es (Maybe o) -> Stream s f es o
+takeWhileJust = stream . ignore . takeWhileJust . pull
+
 ||| Drops `n` elements of the input, then echoes the rest.
 export
 drop : Nat -> Stream s f es o -> Stream s f es o
@@ -248,6 +253,18 @@ mapChunks f = S . mapChunks f . pull
 export %inline
 mapChunksEval : (List o -> f es (List p)) -> Stream s f es o -> Stream s f es p
 mapChunksEval f = S . mapChunksEval f . pull
+
+||| Chunk-wise consumes the output, draining the given stream.
+export %inline
+sinkChunks : (List o -> f es ()) -> Stream s f es o -> Stream s f es p
+sinkChunks f = S . sinkChunks f . pull
+
+||| Consumes the output one value at a time, draining the given stream.
+|||
+||| See also `sinkChunks` for a potentially more efficient version.
+export %inline
+sink : (o -> f es ()) -> Stream s f es o -> Stream s f es p
+sink f = S . sink f . pull
 
 ||| Emits only inputs which match the supplied predicate.
 export %inline
@@ -369,6 +386,12 @@ export
 any : (o -> Bool) -> Stream s f es o -> Stream s f es Bool
 any pred (S p) = stream $ any pred p >>= output1
 
+||| Wraps the values emitted by this stream in a `Just` and
+||| marks its end with a `Nothing`.
+export
+endWithNothing : Stream s f es o -> Stream s f es (Maybe o)
+endWithNothing s = map Just s <+> pure Nothing
+
 --------------------------------------------------------------------------------
 -- Scans
 --------------------------------------------------------------------------------
@@ -452,6 +475,11 @@ intersperse sep (S p) =
   S $ uncons1 p >>= \case
     Left _      => pure ()
     Right (h,t) => cons [h] (mapChunks (>>= \v => [sep,v]) t)
+
+||| Emits a count (starting at 1) of the number of values emitted.
+export %inline
+count : Stream s f es o -> Stream s f es Nat
+count = mapAccumulate 1 (\n => const (S n, n))
 
 --------------------------------------------------------------------------------
 -- Zipping Streams
@@ -601,6 +629,7 @@ resources acqs = stream . pull . resourcesWeak acqs
 
 parameters {0 f       : List Type -> Type -> Type}
            {auto merr : ELift1 s f}
+           {auto mcnc : MCancel f}
 
   ||| Chunk-wise accumulates the values emitted by a stream.
   export covering %inline
@@ -608,34 +637,30 @@ parameters {0 f       : List Type -> Type -> Type}
        (init : a)
     -> (acc : a -> List o -> a)
     -> Stream s f es o
-    -> f [] (Outcome es a)
+    -> f es a
   accumChunks init acc = run . foldChunks init acc . pull
 
   ||| Accumulates the values emitted by a stream.
   export covering %inline
-  accum :
-       (init : a)
-    -> (acc : a -> o -> a)
-    -> Stream s f es o
-    -> f [] (Outcome es a)
+  accum : (init : a) -> (acc : a -> o -> a) -> Stream s f es o -> f es a
   accum init acc = run . fold init acc . pull
 
   ||| Accumulates the values emitted by a stream in a snoclist.
   export covering %inline
-  toSnoc : Stream s f es o -> f [] (Outcome es $ SnocList o)
+  toSnoc : Stream s f es o -> f es (SnocList o)
   toSnoc = accumChunks [<] (<><)
 
   ||| Accumulates the values emitted by a stream in a list.
   export covering %inline
-  toList : Stream s f es o -> f [] (Outcome es $ List o)
-  toList = map (map (<>> [])) . toSnoc
+  toList : Stream s f es o -> f es (List o)
+  toList = map (<>> []) . toSnoc
 
   ||| Accumulates the values emitted by a stream in a list.
   export covering %inline
-  toChunks : Stream s f es o -> f [] (Outcome es $ List $ List o)
-  toChunks = map (map (<>> [])) . accumChunks [<] (:<)
+  toChunks : Stream s f es o -> f es (List $ List o)
+  toChunks = map (<>> []) . accumChunks [<] (:<)
 
   ||| Runs a stream to completion, discarding all values it emits.
   export covering %inline
-  run : Stream s f [] () -> f [] ()
-  run = ignore . accumChunks () (\_,_ => ())
+  run : Stream s f es () -> f es ()
+  run = accumChunks () (\_,_ => ())

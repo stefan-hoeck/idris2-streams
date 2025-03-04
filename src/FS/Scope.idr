@@ -131,13 +131,10 @@ scope cleanup par ss =
       ss2  := insertScope par2 $ insertScope sc ss
    in ({index $= S} ss2, sc)
 
-parameters {0    f   : List Type -> Type -> Type}
-           {auto eff : ELift1 s f}
-
-  ||| Initial state of scopes.
-  export
-  empty : f es (ScopeST s f)
-  empty = pure $ SS 1 empty
+||| Initial state of scopes.
+export
+empty : ScopeST s f
+empty = SS 1 empty
 
 parameters {0    f   : List Type -> Type -> Type}
            {auto eff : ELift1 s f}

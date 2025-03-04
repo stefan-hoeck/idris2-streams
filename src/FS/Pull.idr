@@ -506,6 +506,18 @@ takeThrough :
   -> Pull s f o es (Maybe $ Pull s f o es r)
 takeThrough = takeWhile_ True
 
+||| Emits values until the given pull emits a `Nothing`.
+export
+takeWhileJust :
+     Pull s f (Maybe o) es r
+  -> Pull s f o es (Pull s f (Maybe o) es r)
+takeWhileJust p =
+  assert_total $ uncons p >>= \case
+    Left v      => pure (pure v)
+    Right (o,p) => case takeWhileJustImpl [<] o of
+      (l,[]) => cons l $ takeWhileJust p
+      (l,r)  => output l $> cons r p
+
 ||| Emits the last `n` elements of the input
 |||
 ||| Note: The whole `n` values have to be kept in memory, therefore,
@@ -591,6 +603,24 @@ mapChunksEval f p =
     Right (vs,p) => do
       ws <- Eval (f vs)
       cons ws $ mapChunksEval f p
+
+||| Consumes the produced chunks of output, draining the pull.
+export
+sinkChunks : (List o -> f es ()) -> Pull s f o es r -> Pull s f p es r
+sinkChunks f p =
+  assert_total $ uncons p >>= \case
+    Left x       => pure x
+    Right (vs,p) => Eval (f vs) >> sinkChunks f p
+
+||| Consumes the produced output, draining the pull.
+|||
+||| See also `sinkChunks` for a potentially more efficient version.
+export
+sink : (o -> f es ()) -> Pull s f o es r -> Pull s f p es r
+sink f p =
+  assert_total $ uncons1 p >>= \case
+    Left x      => pure x
+    Right (v,p) => Eval (f v) >> sink f p
 
 ||| Maps the output of a `Pull`
 export %inline
@@ -837,10 +867,10 @@ parameters {0 f      : List Type -> Type -> Type}
       IScope sc2 p => step p sc2
 
   covering
-  loop : Pull s f Void es r -> Scope s f -> f es (Maybe r)
+  loop : Pull s f Void es r -> Scope s f -> f es r
   loop p sc =
     step p sc >>= \case
-      Done _ v       => pure (Just v)
+      Done _ v       => pure v
       Out  sc2 [] p2 => loop p2 sc2
 
 ||| Runs a `Pull` to completion, eventually producing
@@ -851,20 +881,14 @@ parameters {0 f      : List Type -> Type -> Type}
 |||       `Async` and racing it with a cancelation thread (for instance,
 |||       by waiting for an operating system signal).
 export covering
-run : ELift1 s f => Pull s f Void es r -> f [] (Outcome es r)
-run p = do
-  st  <- Scope.empty {es = []}
-  ref <- newref st
-  sc  <- root {es = []} ref
-  res <- attempt {fs = []} (loop ref p sc)
-  close ref sc.id
-  pure $ case res of
-    Right Nothing  => Canceled
-    Right (Just v) => Succeeded v
-    Left x         => Error x
+run : MCancel f => ELift1 s f => Pull s f Void es r -> f es r
+run p =
+  flip (bracket $ newref Scope.empty) (\ref => close ref RootID) $ \ref => do
+    sc  <- root {es} ref
+    loop ref p sc
 
 ||| Convenience alias of `run` for running a `Pull` in the `Elin s`
 ||| monad, producing a pure result.
 export %inline covering
-pullElin : (forall s . Pull s (Elin s) Void es r) -> Outcome es r
-pullElin f = either absurd id $ runElin (run f)
+pullElin : (forall s . Pull s (Elin s) Void es r) -> Result es r
+pullElin f = runElin (run f)
