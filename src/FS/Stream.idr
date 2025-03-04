@@ -225,6 +225,11 @@ export
 drop : Nat -> Stream s f es o -> Stream s f es o
 drop n (S p) = S $ drop n p >>= fromMaybe (pure ())
 
+||| Only keeps the first element of the input.
+export %inline
+head : Stream s f es o -> Stream s f es o
+head = take 1
+
 ||| Drops the first element of the input.
 export %inline
 tail : Stream s f es o -> Stream s f es o

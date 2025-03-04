@@ -1,4 +1,4 @@
-# Functional, Effectful Streams with Resource Management and Error Handling
+# Effectful, Concurrent Streams
 
 This is a library for defining and manipulating streams of data in a clear, concise,
 safe, and performant way. In this tutorial, we are going to look in detail
