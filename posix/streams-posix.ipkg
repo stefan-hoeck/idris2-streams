@@ -11,3 +11,4 @@ depends    = base         >= 0.7.0
 
 modules = FS.Posix
         , FS.Posix.Internal
+        , FS.Socket
