@@ -363,6 +363,11 @@ export %inline
 minimum : Ord o => Stream s f es o -> Stream s f es o
 minimum = fold1 min
 
+||| Emits the number of values encountered
+export %inline
+count : Stream s f es o -> Stream s f es Nat
+count = fold 0 (const . S)
+
 ||| Maps and accumulates the values in a stream via a `Semigroup`.
 |||
 ||| Note: Unlike `concat`, this will return an empty stream if the input
@@ -487,10 +492,21 @@ intersperse sep (S p) =
     Left _      => pure ()
     Right (h,t) => cons [h] (mapChunks (>>= \v => [sep,v]) t)
 
-||| Emits a count (starting at 1) of the number of values emitted.
+||| Similar to `fold` but emits the currently accumulated state
+||| on every output.
+export
+scan : p -> (p -> o -> p) -> Stream s f es o -> Stream s f es p
+scan ini f = mapAccumulate ini (\t,v => let next := f t v in (next,next))
+
+||| Emits a running total of the values emitted.
 export %inline
-count : Stream s f es o -> Stream s f es Nat
-count = mapAccumulate 1 (\n => const (S n, n))
+runningTotal : Num o => Stream s f es o -> Stream s f es o
+runningTotal = scan 0 (+)
+
+||| Emits a running count (starting at 1) of the number of values emitted.
+export %inline
+runningCount : Stream s f es o -> Stream s f es Nat
+runningCount = scan 0 (const . S)
 
 --------------------------------------------------------------------------------
 -- Zipping Streams
