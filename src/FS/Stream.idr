@@ -85,6 +85,12 @@ export %inline
 emits : List o -> Stream s f es o
 emits = S . output
 
+||| Creates an empti stream that just evaluates the supplied effect.
+||| If the effect fails, the returned stream fails.
+export %inline
+exec : f es () -> Stream s f es o
+exec = S . Eval
+
 ||| Creates a single element stream that gets its value by evaluating the
 ||| supplied effect. If the effect fails, the returned stream fails.
 export %inline

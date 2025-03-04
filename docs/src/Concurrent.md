@@ -23,10 +23,10 @@ runProg prog =
 
 ```idris
 counter : Prog es Nat
-counter = count $ repeat (sleep 10.ms)
+counter = count $ repeat (delayed 10.ms ())
 
 done : Prog es Bool
-done = sleep 5.s $> True
+done = delayed 5.s True
 
 prog1 : Prog [Errno] ()
 prog1 = (counter `interruptWhen` done) |> take 1000000 |> printLnTo Stdout
@@ -49,14 +49,15 @@ pretty (T ix c, tot) =
   "Stream: \{show ix}; Count: \{padLeft 3 ' ' $ show c}; Total: \{padLeft 3 ' ' $ show tot}"
 
 tick : Nat -> Clock Duration -> Prog [Errno] Tick
-tick ix dur = T ix <$> count (repeat $ sleep dur)
+tick ix dur = T ix <$> count (repeat $ delayed dur ())
 
 prog3 : Prog [Errno] ()
 prog3 =
-     merge [ tick 1 100.ms, tick 2 700.ms, tick 3 1500.ms, tick 4 300.ms]
+     merge [ tick 1 100.ms, tick 2 700.ms, tick 3 1500.ms, tick 4 300.ms ]
   |> zipWithIndex
   |> map pretty
   |> take 1000
+  |> timeout 10.s
   |> linesTo Stdout
 
 covering

@@ -1,3 +1,10 @@
+||| This module provides combinators for running streams concurrently,
+||| merging the output they produce nondeterministically, or interrupting
+||| a stream after a timeout.
+|||
+||| Unlike the combinators in `FS.Stream`, we need a concurrent runtime
+||| to use the combinators provided here, which means that they run in
+||| the `Async` monad.
 module FS.Concurrent
 
 import Data.Linear.Deferred
@@ -13,18 +20,25 @@ import IO.Async.Semaphore
 import public FS.Stream
 import public IO.Async
 
+||| Convenience alias for `Pull World . Async`
 public export
 0 AsyncPull : Type -> Type -> List Type -> Type -> Type
 AsyncPull e = Pull World (Async e)
 
+||| Convenience alias for `Stream World . Async`
 public export
 0 AsyncStream : Type -> List Type -> Type -> Type
 AsyncStream e = Stream World (Async e)
 
-||| An empty stream that terminates after the given duration.
+||| An empty stream that terminates after the given delay.
 export %inline
-sleep : TimerH e => Clock Duration -> AsyncStream e es ()
-sleep = eval . sleep
+sleep : TimerH e => Clock Duration -> AsyncStream e es o
+sleep = exec . sleep
+
+||| Emits the given value after a delay of the given duration.
+export %inline
+delayed : TimerH e => Clock Duration -> o -> AsyncStream e es o
+delayed dur v = sleep dur <+> pure v
 
 --------------------------------------------------------------------------------
 -- Interrupting Streams
@@ -139,12 +153,12 @@ parameters (que  : BQueue (List o))
     _ <- acquire (traverse child ss) (\fs => putDeferred done () >> traverse_ wait fs)
     Till (await res >>= fromResult) (pull $ repeat $ evals (dequeue que))
 
-||| Runs the given streams in parallel and non-deterministically
+||| Runs the given streams in parallel and nondeterministically
 ||| (but chunkc-wise) interleaves their output.
 |||
 ||| The resulting stream will emit chunks as long as one of the input
 ||| streams is still alive, or until one of the input streams terminates
-||| with an error, in which case the output stream will terminated with
+||| with an error, in which case the output stream will terminate with
 ||| the same error.
 export
 merge : List (AsyncStream e es o) -> AsyncStream e es o
@@ -152,8 +166,38 @@ merge []  = neutral
 merge [s] = s
 merge ss  =
   force $ Prelude.do
+    -- A bounded queue where the running streams will write their output
+    -- to. There will be no buffering: evaluating the streams will block
+    -- until then next chunk of ouptut has been requested by the consumer.
     que  <- bqueueOf (List o) 0
+
+    -- Signals the exhaustion of the output stream, which will cause all
+    -- input streams to be interrupted.
     done <- deferredOf {s = World} ()
+
+    -- Signals the termination of the input streams. This will be set as
+    -- soon as one input stream throws an error, or after all input
+    -- streams terminated successfully.
     res  <- deferredOf {s = World} (Result es ())
+
+    -- Semaphore-like counter keeping track of the number of input streams
+    -- that are still running.
     sema <- newref (length ss)
     pure (merged que done res sema ss)
+
+||| Runs the given streams in parallel and nondeterministically interleaves
+||| their output.
+|||
+||| This will terminate as soon as the first string is exhausted.
+export
+mergeHaltL : (s1,s2 : AsyncStream  e es o) -> AsyncStream e es o
+mergeHaltL s1 s2 = takeWhileJust $ merge [endWithNothing s1, map Just s2]
+
+||| Runs the given streams in parallel and nondeterministically interleaves
+||| their output.
+|||
+||| This will terminate as soon as either stream is exhausted.
+export
+mergeHaltBoth : (s1,s2 : AsyncStream  e es o) -> AsyncStream e es o
+mergeHaltBoth s1 s2 =
+  takeWhileJust $ merge [endWithNothing s1, endWithNothing s2]
