@@ -24,7 +24,7 @@ runProg prog =
 
 ```idris
 counter : Prog es Nat
-counter = count $ repeat (delayed 10.ms ())
+counter = runningCount $ repeat (delayed 10.ms ())
 
 done : Prog es Bool
 done = delayed 5.s True
@@ -40,17 +40,12 @@ prog2 = ignore (takeWhile (not . null) (repeat ask)) <+> stdoutLn "Time's up! Go
       stdoutLn "Please enter your name:"
       take 1 $ timeout 5.s (lines $ bytes Stdin 0xff) <+> pure empty
 
-record Tick where
-  constructor T
-  ix      : Nat
-  counter : Nat
-
-pretty: (Tick, Nat) -> String
-pretty (T ix c, tot) =
+pretty: ((Nat,Nat), Nat) -> String
+pretty ((ix,c),tot) =
   "Stream: \{show ix}; Count: \{padLeft 3 ' ' $ show c}; Total: \{padLeft 3 ' ' $ show tot}"
 
-tick : Nat -> Clock Duration -> Prog [Errno] Tick
-tick ix dur = T ix <$> count (repeat $ delayed dur ())
+tick : Nat -> Clock Duration -> Prog [Errno] (Nat,Nat)
+tick ix dur = zipWithIndex (repeat $ delayed dur ix)
 
 prog3 : Prog [Errno] ()
 prog3 =
@@ -66,11 +61,11 @@ prettyEntry (E path type stats) = "\{path}: \{show type}"
 
 idrisLines : Prog [Errno] ()
 idrisLines =
-     deepEntries (PRel [<])
+     deepEntries {p = Rel} "."
   |> filter (regularExt "idr")
   |> (>>= content)
   |> lines
-  |> fold Z (const . S)
+  |> count
   |> printLnTo Stdout
 
 covering
