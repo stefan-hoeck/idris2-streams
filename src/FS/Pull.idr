@@ -5,7 +5,6 @@ import public FS.ChunkSize
 
 import Control.Monad.Elin
 
-import Data.Linear.Deferred
 import Data.Linear.Ref1
 import Data.List
 import Data.Maybe
@@ -140,7 +139,7 @@ data Pull :
   ||| it involves racing stream evaluation against reading the
   ||| deferred value.
   Till   :
-       Deferred World ()
+       Async e es ()
     -> Pull World (Async e) o es ()
     -> Pull World (Async e) o es ()
 
@@ -790,11 +789,11 @@ parameters {0 f      : List Type -> Type -> Type}
       -- Race completion of the `deferred` value against evaluating
       -- the given pull. Currently, if the race is canceled, this
       -- is treated as the pull being interrupted.
-      Till def p =>
-        race2 (step p sc) (await def) >>= \case
+      Till interrupt p =>
+        race2 (step p sc) interrupt >>= \case
           Just (Left v) => case v of
             Done ss res    => pure (Done ss res)
-            Out ss chunk x => pure (Out ss chunk (Till def x))
+            Out ss chunk x => pure (Out ss chunk (Till interrupt x))
           _                => pure (Done sc ())
 
       -- Runs pull in a new child scope. The scope is setup and registered,
