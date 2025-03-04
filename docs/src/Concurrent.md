@@ -3,12 +3,15 @@
 ```idris
 module Concurrent
 
+import Debug.Trace
 import Data.FilePath
 import Data.String
+import Data.Vect
 
 import IO.Async.Loop.Posix
 import FS.Stream as S
 import FS.Posix
+import FS.Socket
 import FS.System
 
 %default total
@@ -68,9 +71,28 @@ idrisLines =
   |> count
   |> printLnTo Stdout
 
+isStop : ByteString -> Bool
+isStop bs = trim bs == ":q"
+
+echo : Prog [Errno] ()
+echo = do
+  srv <- acceptOn AF_INET SOCK_STREAM (IP4 [127,0,0,1] 5555)
+  stdoutLn ("Got a connection (file descriptor: \{show $ fileDesc srv})")
+  handleErrors (\case Here x => stderrLn "\{x}") (serve srv)
+
+  where
+    serve : Socket AF_INET -> Prog [Errno] ()
+    serve sock =
+      resource (pure (Socket.R sock)) $ \_ =>
+           bytes sock 0xffff
+        |> observe (fwritenb Stdout)
+        |> lines
+        |> takeWhile (not . isStop)
+        |> linesTo sock
+
 covering
 main : IO ()
-main = runProg idrisLines
+main = runProg echo
 ```
 
 <!-- vi: filetype=idris2:syntax=markdown

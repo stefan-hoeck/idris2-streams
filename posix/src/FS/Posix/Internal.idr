@@ -1,26 +1,26 @@
 module FS.Posix.Internal
 
 import FS.Internal.Bytes
-import System.Posix.File
+import IO.Async.Posix
 
 %default total
 
 parameters {auto fid : FileDesc a}
            (fd       : a)
            {auto has : Has Errno es}
-           {auto eoi : EIO1 f}
+           {auto ph  : PollH e}
 
-  bytes : SnocList ByteString -> f es ()
+  bytes : SnocList ByteString -> Async e es ()
   bytes [<]   = pure ()
-  bytes [<bs] = fwrite fd bs
-  bytes bss   = fwrite fd (fastConcat $ bss <>> [])
+  bytes [<bs] = fwritenb fd bs
+  bytes bss   = fwritenb fd (fastConcat $ bss <>> [])
 
   ||| Writes a chunk of data
   export
-  writeAll : Cast r ByteString => List r -> f es (List ())
+  writeAll : Cast r ByteString => List r -> Async e es (List ())
   writeAll = ($> []) . go [<]
     where
-      go : SnocList ByteString -> List r -> f es ()
+      go : SnocList ByteString -> List r -> Async e es ()
       go sx []        = bytes sx
       go sx (x :: xs) =
         case cast {to = ByteString} x of
@@ -30,10 +30,10 @@ parameters {auto fid : FileDesc a}
   ||| Writes a chunk of data, inserting a newline character (`0x0a`)
   ||| after every item.
   export
-  writeLines : Cast r ByteString => List r -> f es (List ())
+  writeLines : Cast r ByteString => List r -> Async e es (List ())
   writeLines = ($> []) . go [<]
     where
-      go : SnocList ByteString -> List r -> f es ()
+      go : SnocList ByteString -> List r -> Async e es ()
       go sx []        = bytes sx
       go sx (x :: xs) =
         case cast {to = ByteString} x of
