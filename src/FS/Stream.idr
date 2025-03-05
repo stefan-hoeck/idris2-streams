@@ -130,6 +130,12 @@ export %inline
 unfoldEval : f es (Maybe o) -> Stream s f es o
 unfoldEval act = S $ unfoldEvalMaybe act
 
+||| Produces values via the given effect- and stateful computations
+||| until it returns `Nothing`.
+export %inline
+unfoldEvalST : x -> (x -> f es (Maybe (o,x))) -> Stream s f es o
+unfoldEvalST st act = S $ unfoldEvalST st act
+
 ||| Produces chunks of values via the given effectful computations until
 ||| it returns `Nothing`.
 export %inline

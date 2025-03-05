@@ -10,13 +10,15 @@ depends    = base         >= 0.7.0
            , elin
 
 modules = FS.Bytes
-        , FS.Concurrent
         , FS.Elin
         , FS.ChunkSize
         , FS.Pull
         , FS.Scope
         , FS.Stream
         , FS.System
+
+        , FS.Concurrent
+        , FS.Concurrent.Signal
 
         , FS.Internal.Bytes
         , FS.Internal.Chunk

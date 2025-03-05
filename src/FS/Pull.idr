@@ -250,6 +250,15 @@ unfoldEvalMaybe act =
     Nothing => pure ()
     Just o  => output1 o >> unfoldEvalMaybe act
 
+||| Like `unfold` but produces values via an effectful, stateful computation
+||| until a `Nothing` is returned.
+export
+unfoldEvalST : x -> (x -> f es (Maybe (o,x))) -> Pull s f o es ()
+unfoldEvalST st act =
+  assert_total $ Eval (act st) >>= \case
+    Nothing      => pure ()
+    Just (o,st2) => output1 o >> unfoldEvalST st2 act
+
 ||| Like `unfoldEval` but produces values via an effectful computation
 ||| until the given function returns a `Just`.
 export
