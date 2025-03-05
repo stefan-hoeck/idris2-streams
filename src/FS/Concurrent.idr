@@ -14,6 +14,7 @@ import Data.Maybe
 import FS.Pull
 import FS.Scope
 import IO.Async.BQueue
+import IO.Async.Channel
 import IO.Async.Loop.TimerH
 import IO.Async.Semaphore
 
@@ -39,6 +40,21 @@ sleep = exec . sleep
 export %inline
 delayed : TimerH e => Clock Duration -> o -> AsyncStream e es o
 delayed dur v = sleep dur <+> pure v
+
+--------------------------------------------------------------------------------
+-- Streams from Concurrency Primitives
+--------------------------------------------------------------------------------
+
+||| Converts a bounded queue of chunks into an infinite stream
+||| of values.
+export %inline
+dequeue : BQueue (List o) -> AsyncStream e es o
+dequeue = repeat . evals . dequeue
+
+||| Converts a channel of chunks into an infinite stream of values.
+export %inline
+receive : Channel (List o) -> AsyncStream e es o
+receive = unfoldEvalChunk . receive
 
 --------------------------------------------------------------------------------
 -- Interrupting Streams
@@ -121,7 +137,7 @@ timeout dur str = S $ do
 -- Merging Streams
 --------------------------------------------------------------------------------
 
-parameters (que  : BQueue (List o))
+parameters (chnl : Channel (List o))
            (done : Deferred World ())
            (res  : Deferred World (Result es ()))
            (sema : IORef Nat)
@@ -130,28 +146,30 @@ parameters (que  : BQueue (List o))
   -- in case the stream terminated with an error, `res` is immediately
   -- set, which causes the output stream to be interrupted and refire
   -- the error. Otherwise, the counter in `sema` is atomically reduced
-  -- bye one nad `res` set to `Right ()` in case the counter arrives
-  -- at 0.
+  -- bye one and the channel closed if the counter arrives at 0.
   out : Outcome es () -> Async e [] ()
   out (Error err) = putDeferred res (Left err)
   out _           = do
     0 <- update sema (\x => let y := pred x in (y,y)) | _ => pure ()
-    putDeferred res (Right ())
+    close chnl
 
   -- Starts running one of the input streams `s` in the background, returning
   -- the corresponding fiber. Running `s` is interrupted if
   -- the output stream is exhausted and `done` is completed.
-  -- The running input stream writes all chunks of output to the given
-  -- bounded queue.
+  -- The running input stream writes all chunks of output to the channel.
   child : AsyncStream e es o -> Async e es (Fiber [] ())
-  child = parrunCase (await done) out . sinkChunks (enqueue que)
+  child s =
+       evalMapChunk (map pure . send chnl) s
+    |> takeWhile (== Sent)
+    |> drain
+    |> parrunCase (await done) out
 
   -- starts running all input streams in parallel, and reads chunks of
   -- output from the bounded queue `que`.
   merged : List (AsyncStream e es o) -> AsyncStream e es o
   merged ss = S $ do
     _ <- acquire (traverse child ss) (\fs => putDeferred done () >> traverse_ wait fs)
-    Till (await res >>= fromResult) (pull $ repeat $ evals (dequeue que))
+    Till (await res >>= fromResult) (pull $ receive chnl)
 
 ||| Runs the given streams in parallel and nondeterministically
 ||| (but chunkc-wise) interleaves their output.
@@ -169,7 +187,7 @@ merge ss  =
     -- A bounded queue where the running streams will write their output
     -- to. There will be no buffering: evaluating the streams will block
     -- until then next chunk of ouptut has been requested by the consumer.
-    que  <- bqueueOf (List o) 0
+    chnl <- channelOf (List o) 0
 
     -- Signals the exhaustion of the output stream, which will cause all
     -- input streams to be interrupted.
@@ -183,7 +201,7 @@ merge ss  =
     -- Semaphore-like counter keeping track of the number of input streams
     -- that are still running.
     sema <- newref (length ss)
-    pure (merged que done res sema ss)
+    pure (merged chnl done res sema ss)
 
 ||| Runs the given streams in parallel and nondeterministically interleaves
 ||| their output.
