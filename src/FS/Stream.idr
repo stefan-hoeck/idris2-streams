@@ -304,11 +304,7 @@ evalMap f s = s >>= eval . f
 
 ||| Like `evalMap`, but operates on chunks for performance.
 export
-evalMapChunk :
-     {auto app : Applicative (f es)}
-  -> (List o -> f es (List p))
-  -> Stream s f es o
-  -> Stream s f es p
+evalMapChunk : (List o -> f es (List p)) -> Stream s f es o -> Stream s f es p
 evalMapChunk g s = chunks s >>= evals . g
 
 ||| Chunk-wise folds all inputs using an initial
