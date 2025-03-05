@@ -23,6 +23,13 @@ putImpl v (S _ lst ls) =
    in (S v n [], traverse_ (`putOnce` (v,n)) ls)
 
 %inline
+updImpl : (a -> (a,b)) -> ST a -> (ST a, Async e es b)
+updImpl f (S cur lst ls) =
+  let n     := S lst
+      (v,r) := f cur
+   in (S v n [], traverse_ (`putOnce` (v,n)) ls $> r)
+
+%inline
 nextImpl :
      Poll (Async e)
   -> Nat
@@ -50,11 +57,24 @@ get : Lift1 World f => SignalRef a -> f a
 get (SR ref) = value <$> readref ref
 
 ||| Writes the current value to the signal.
-export %inline
+export
 put : SignalRef a -> (v : a) -> Async e es ()
 put (SR ref) v = do
   act <- update ref (putImpl v)
   act
+
+||| Updates the value stored in the signal with the given function
+||| and returns the second result of the computation.
+export
+update : SignalRef a -> (f : a -> (a,b)) -> Async e es b
+update (SR ref) f = do
+  act <- update ref (updImpl f)
+  act
+
+||| Updates the value stored in the signal and returns the result.
+export %inline
+updateAndGet : SignalRef a -> (f : a -> a) -> Async e es a
+updateAndGet s f = update s (\v => let w := f v in (w,w))
 
 ||| Awaits the next value and its count, potentially blocking the
 ||| current fiber if the internal counter is at `current`.
@@ -62,7 +82,7 @@ put (SR ref) v = do
 ||| Note: The internal counter starts at `1`, so invoking this with
 |||       a count of `0` will always immediately return the internal
 |||       value and count.
-export %inline
+export
 next : SignalRef a -> Nat -> Async e es (a,Nat)
 next (SR ref) n = do
   def <- onceOf (a,Nat)

@@ -11,8 +11,10 @@ import Data.Linear.Deferred
 import Data.Linear.Ref1
 import Data.Maybe
 
+import FS.Concurrent.Signal
 import FS.Pull
 import FS.Scope
+
 import IO.Async.BQueue
 import IO.Async.Channel
 import IO.Async.Loop.TimerH
@@ -95,16 +97,6 @@ parrun :
   -> Async e es (Fiber [] ())
 parrun check = parrunCase check . const
 
-||| Interrupts the given stream when the given `Deferred` is completed.
-export %inline
-tillDeferred : Deferred World () -> AsyncStream e es o -> AsyncStream e es o
-tillDeferred = interruptOn . await
-
-||| Interrupts the given stream when the given `Semaphore` is completed.
-export %inline
-tillSemaphore : Semaphore -> AsyncStream e es o -> AsyncStream e es o
-tillSemaphore = interruptOn . await
-
 ||| Runs the first stream until it terminates or the second
 ||| stream emits a `True`.
 export
@@ -123,7 +115,7 @@ interruptWhen str stop =
     watched doneL doneR = S $ do
       let watcher := parrun (await doneL) (putDeferred doneR ()) (ignore $ any id stop)
       _ <- acquire watcher (\f => putDeferred doneL () >> wait f)
-      pull (tillDeferred doneR str)
+      pull (interruptOn (await doneR) str)
 
 ||| Runs the given stream until the given duration expires.
 export
@@ -224,68 +216,28 @@ mergeHaltBoth s1 s2 =
 -- Parallel Joining of Streams
 --------------------------------------------------------------------------------
 
-||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
-||| opening at most `maxOpen` streams at any point in time.
-|||
-||| The outer stream is evaluated and each resulting inner stream is run concurrently,
-||| up to `maxOpen` stream. Once this limit is reached, evaluation of the outer stream
-||| is paused until one or more inner streams finish evaluating.
-|||
-||| When the outer stream stops gracefully, all inner streams continue to run,
-||| resulting in a stream that will stop when all inner streams finish
-||| their evaluation.
-|||
-||| When the outer stream fails, evaluation of all inner streams is interrupted
-||| and the resulting stream will fail with same failure.
-|||
-||| When any of the inner streams fail, then the outer stream and all other inner
-||| streams are interrupted, resulting in stream that fails with the error of the
-||| stream that caused initial failure.
-|||
-||| Finalizers on each inner stream are run at the end of the inner stream,
-||| concurrently with other stream computations.
-|||
-||| Finalizers on the outer stream are run after all inner streams have been pulled
-||| from the outer stream but not before all inner streams terminate -- hence finalizers on the outer stream will run
-||| AFTER the LAST finalizer on the very last inner stream.
-|||
-||| Finalizers on the returned stream are run after the outer stream has finished
-||| and all open inner streams have finished.
-export
-parJoin :
-     (maxOpen : Nat)
-  -> (outer   : AsyncStream e es (AsyncStream e es o))
-  -> AsyncStream e es o
-parJoin maxOpen outer = ?foo
+parameters (done      : Deferred World (Result es ()))
+           (available : Semaphore)
+           (running   : SignalRef Nat)
+           (outcomes  : Channel (Async e es ()))
+           (output    : Channel (List o))
 
---     def parJoin(maxOpen: Int)(implicit F: Concurrent[F]): Stream[F, O] = {
---       assert(maxOpen > 0, s"maxOpen must be > 0, was: $maxOpen")
---
---       if (maxOpen === 1) outer.flatten
---       else {
---         val fstream: F[Stream[F, O]] = for {
---           done <- SignallingRef(none[Option[Throwable]])
---           available <- Semaphore(maxOpen.toLong)
---           // starts with 1 because outer stream is running by default
---           running <- SignallingRef(1)
---           outcomes <- Channel.unbounded[F, F[Unit]]
---           output <- Channel.synchronous[F, Chunk[O]]
---         } yield {
---           def stop(rslt: Option[Throwable]): F[Unit] =
---             done.update {
---               case rslt0 @ Some(Some(err0)) =>
---                 rslt.fold[Option[Option[Throwable]]](rslt0) { err =>
---                   Some(Some(CompositeFailure(err0, err)))
---                 }
---               case _ => Some(rslt)
---             }
---
---           val incrementRunning: F[Unit] = running.update(_ + 1)
---           val decrementRunning: F[Unit] =
---             running
---               .updateAndGet(_ - 1)
---               .flatMap(now => if (now == 0) outcomes.close.void else F.unit)
---
+  %inline
+  stop : Result es () -> Async e es ()
+  stop = putDeferred done
+
+  %inline
+  incRunning : Async e es ()
+  incRunning = ignore $ updateAndGet running S
+
+  %inline
+  decRunning : Async e es ()
+  decRunning =
+    updateAndGet running pred >>= \case
+      0 => close outcomes
+      _ => pure ()
+
+  onOutcome : Outcome es () -> Result es () -> Async e es ()
 --           def onOutcome(
 --               oc: Outcome[F, Throwable, Unit],
 --               cancelResult: Either[Throwable, Unit]
@@ -302,6 +254,10 @@ parJoin maxOpen outer = ?foo
 --               case Outcome.Canceled() =>
 --                 cancelResult.fold(t => stop(Some(t)), _ => F.unit)
 --             }
+--
+
+  inner : AsyncStream e es o -> Async e es ()
+  -- inner asnc sc
 --
 --           def runInner(inner: Stream[F, O], outerScope: Scope[F]): F[Unit] =
 --             F.uncancelable { _ =>
@@ -332,6 +288,63 @@ parJoin maxOpen outer = ?foo
 --                   }.void
 --                 }
 --             }
+
+||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
+||| opening at most `maxOpen` streams at any point in time.
+|||
+||| The outer stream is evaluated and each resulting inner stream is run concurrently,
+||| up to `maxOpen` stream. Once this limit is reached, evaluation of the outer stream
+||| is paused until one or more inner streams finish evaluating.
+|||
+||| When the outer stream stops gracefully, all inner streams continue to run,
+||| resulting in a stream that will stop when all inner streams finish
+||| their evaluation.
+|||
+||| When the outer stream fails, evaluation of all inner streams is interrupted
+||| and the resulting stream will fail with same failure.
+|||
+||| When any of the inner streams fail, then the outer stream and all other inner
+||| streams are interrupted, resulting in stream that fails with the error of the
+||| stream that caused initial failure.
+|||
+||| Finalizers on each inner stream are run at the end of the inner stream,
+||| concurrently with other stream computations.
+|||
+||| Finalizers on the outer stream are run after all inner streams have been pulled
+||| from the outer stream but not before all inner streams terminate -- hence finalizers on the outer stream will run
+||| AFTER the LAST finalizer on the very last inner stream.
+|||
+||| Finalizers on the returned stream are run after the outer stream has finished
+||| and all open inner streams have finished.
+export
+parJoin :
+     (maxOpen    : Nat)
+  -> {auto 0 prf : IsSucc maxOpen}
+  -> (outer      : AsyncStream e es (AsyncStream e es o))
+  -> AsyncStream e es o
+parJoin maxOpen outer =
+  force $ do
+    done      <- deferredOf {s = World} (Result es ())
+    available <- semaphore maxOpen
+    running   <- signal (S Z)
+    outcomes  <- channelOf (Async e es ()) 0xffff_ffff
+    output    <- channelOf (List o) 0
+    pure ?fooo
+
+--     def parJoin(maxOpen: Int)(implicit F: Concurrent[F]): Stream[F, O] = {
+--       assert(maxOpen > 0, s"maxOpen must be > 0, was: $maxOpen")
+--
+--       if (maxOpen === 1) outer.flatten
+--       else {
+--         val fstream: F[Stream[F, O]] = for {
+--           done <- SignallingRef(none[Option[Throwable]])
+--           available <- Semaphore(maxOpen.toLong)
+--           // starts with 1 because outer stream is running by default
+--           running <- SignallingRef(1)
+--           outcomes <- Channel.unbounded[F, F[Unit]]
+--           output <- Channel.synchronous[F, Chunk[O]]
+--         } yield {
+--
 --
 --           def runOuter: F[Unit] =
 --             F.uncancelable { _ =>
