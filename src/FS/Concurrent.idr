@@ -219,3 +219,173 @@ export
 mergeHaltBoth : (s1,s2 : AsyncStream  e es o) -> AsyncStream e es o
 mergeHaltBoth s1 s2 =
   takeWhileJust $ merge [endWithNothing s1, endWithNothing s2]
+
+--------------------------------------------------------------------------------
+-- Parallel Joining of Streams
+--------------------------------------------------------------------------------
+
+||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
+||| opening at most `maxOpen` streams at any point in time.
+|||
+||| The outer stream is evaluated and each resulting inner stream is run concurrently,
+||| up to `maxOpen` stream. Once this limit is reached, evaluation of the outer stream
+||| is paused until one or more inner streams finish evaluating.
+|||
+||| When the outer stream stops gracefully, all inner streams continue to run,
+||| resulting in a stream that will stop when all inner streams finish
+||| their evaluation.
+|||
+||| When the outer stream fails, evaluation of all inner streams is interrupted
+||| and the resulting stream will fail with same failure.
+|||
+||| When any of the inner streams fail, then the outer stream and all other inner
+||| streams are interrupted, resulting in stream that fails with the error of the
+||| stream that caused initial failure.
+|||
+||| Finalizers on each inner stream are run at the end of the inner stream,
+||| concurrently with other stream computations.
+|||
+||| Finalizers on the outer stream are run after all inner streams have been pulled
+||| from the outer stream but not before all inner streams terminate -- hence finalizers on the outer stream will run
+||| AFTER the LAST finalizer on the very last inner stream.
+|||
+||| Finalizers on the returned stream are run after the outer stream has finished
+||| and all open inner streams have finished.
+export
+parJoin :
+     (maxOpen : Nat)
+  -> (outer   : AsyncStream e es (AsyncStream e es o))
+  -> AsyncStream e es o
+parJoin maxOpen outer = ?foo
+
+--     def parJoin(maxOpen: Int)(implicit F: Concurrent[F]): Stream[F, O] = {
+--       assert(maxOpen > 0, s"maxOpen must be > 0, was: $maxOpen")
+--
+--       if (maxOpen === 1) outer.flatten
+--       else {
+--         val fstream: F[Stream[F, O]] = for {
+--           done <- SignallingRef(none[Option[Throwable]])
+--           available <- Semaphore(maxOpen.toLong)
+--           // starts with 1 because outer stream is running by default
+--           running <- SignallingRef(1)
+--           outcomes <- Channel.unbounded[F, F[Unit]]
+--           output <- Channel.synchronous[F, Chunk[O]]
+--         } yield {
+--           def stop(rslt: Option[Throwable]): F[Unit] =
+--             done.update {
+--               case rslt0 @ Some(Some(err0)) =>
+--                 rslt.fold[Option[Option[Throwable]]](rslt0) { err =>
+--                   Some(Some(CompositeFailure(err0, err)))
+--                 }
+--               case _ => Some(rslt)
+--             }
+--
+--           val incrementRunning: F[Unit] = running.update(_ + 1)
+--           val decrementRunning: F[Unit] =
+--             running
+--               .updateAndGet(_ - 1)
+--               .flatMap(now => if (now == 0) outcomes.close.void else F.unit)
+--
+--           def onOutcome(
+--               oc: Outcome[F, Throwable, Unit],
+--               cancelResult: Either[Throwable, Unit]
+--           ): F[Unit] =
+--             oc match {
+--               case Outcome.Succeeded(fu) =>
+--                 cancelResult.fold(t => stop(Some(t)), _ => outcomes.send(fu).void)
+--
+--               case Outcome.Errored(t) =>
+--                 CompositeFailure
+--                   .fromResults(Left(t), cancelResult)
+--                   .fold(t => stop(Some(t)), _ => F.unit)
+--
+--               case Outcome.Canceled() =>
+--                 cancelResult.fold(t => stop(Some(t)), _ => F.unit)
+--             }
+--
+--           def runInner(inner: Stream[F, O], outerScope: Scope[F]): F[Unit] =
+--             F.uncancelable { _ =>
+--               outerScope.lease
+--                 .flatTap(_ => available.acquire >> incrementRunning)
+--                 .flatMap { lease =>
+--                   F.start {
+--                     inner.chunks
+--                       .foreach(s => output.send(s).void)
+--                       .interruptWhen(done.map(_.nonEmpty))
+--                       .compile
+--                       .drain
+--                       .guaranteeCase { oc =>
+--                         lease.cancel.rethrow
+--                           .guaranteeCase {
+--                             case Outcome.Succeeded(fu) =>
+--                               onOutcome(oc <* Outcome.succeeded(fu), Either.unit)
+--
+--                             case Outcome.Errored(e) =>
+--                               onOutcome(oc, Either.left(e))
+--
+--                             case _ =>
+--                               F.unit
+--                           }
+--                           .forceR(available.release >> decrementRunning)
+--                       }
+--                       .voidError
+--                   }.void
+--                 }
+--             }
+--
+--           def runOuter: F[Unit] =
+--             F.uncancelable { _ =>
+--               outer
+--                 .flatMap(inner =>
+--                   Pull
+--                     .getScope[F]
+--                     .flatMap(outerScope => Pull.eval(runInner(inner, outerScope)))
+--                     .streamNoScope
+--                 )
+--                 .drain
+--                 .interruptWhen(done.map(_.nonEmpty))
+--                 .compile
+--                 .drain
+--                 .guaranteeCase(onOutcome(_, Either.unit) >> decrementRunning)
+--                 .voidError
+--             }
+--
+--           def outcomeJoiner: F[Unit] =
+--             outcomes.stream
+--               .foreach(identity)
+--               .compile
+--               .drain
+--               .guaranteeCase {
+--                 case Outcome.Succeeded(_) =>
+--                   stop(None) >> output.close.void
+--
+--                 case Outcome.Errored(t) =>
+--                   stop(Some(t)) >> output.close.void
+--
+--                 case Outcome.Canceled() =>
+--                   stop(None) >> output.close.void
+--               }
+--               .voidError
+--
+--           def signalResult(fiber: Fiber[F, Throwable, Unit]): F[Unit] =
+--             done.get.flatMap { blah =>
+--               blah.flatten.fold[F[Unit]](fiber.joinWithNever)(F.raiseError)
+--             }
+--
+--           Stream
+--             .bracket(F.start(runOuter) >> F.start(outcomeJoiner)) { fiber =>
+--               stop(None) >>
+--                 // in case of short-circuiting, the `fiberJoiner` would not have had a chance
+--                 // to wait until all fibers have been joined, so we need to do it manually
+--                 // by waiting on the counter
+--                 running.waitUntil(_ == 0) >>
+--                 signalResult(fiber)
+--             }
+--             .flatMap { _ =>
+--               output.stream.flatMap(Stream.chunk)
+--             }
+--         }
+--
+--         Stream.eval(fstream).flatten
+--       }
+--     }
