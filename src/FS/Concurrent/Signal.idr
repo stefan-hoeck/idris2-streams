@@ -71,6 +71,11 @@ update (SR ref) f = do
   act <- update ref (updImpl f)
   act
 
+||| Updates the value stored in the signal.
+export %inline
+modify : SignalRef a -> (f : a -> a) -> Async e es ()
+modify s f = update s (\v => (f v, ()))
+
 ||| Updates the value stored in the signal and returns the result.
 export %inline
 updateAndGet : SignalRef a -> (f : a -> a) -> Async e es a
@@ -105,3 +110,9 @@ continuous = repeat . eval . get
 export %inline
 discrete : SignalRef a -> Stream World (Async e) es a
 discrete s = unfoldEvalST 0 (map Just . next s)
+
+||| Blocks the fiber and observes the given signal until the given
+||| predicate returns `True`.
+export
+until : SignalRef a -> (a -> Bool) -> Async e es ()
+until ref pred = discrete ref |> any pred |> drain |> run

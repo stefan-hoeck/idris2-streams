@@ -313,21 +313,6 @@ export
 evalMapChunk : (List o -> f es (List p)) -> Stream s f es o -> Stream s f es p
 evalMapChunk g s = chunks s >>= evals . g
 
-||| Performs the given action on each emitted value, thus draining
-||| the stream, consuming all its output.
-export %inline
-foreach : (o -> f es ()) -> Stream s f es o -> Stream s f es ()
-foreach f = (>>= exec . f)
-
-||| Perform the given action on every chunk of output thus draining
-||| the stream, consuming all its output.
-|||
-||| For acting on values without actually draining the stream, see
-||| `observe` and `observeChunk`.
-export
-foreachChunk : (List o -> f es ()) -> Stream s f es o -> Stream s f es ()
-foreachChunk f = foreach f . chunks
-
 ||| Chunk-wise folds all inputs using an initial
 ||| value and supplied binary operator, and emits a single element stream.
 export
@@ -619,9 +604,25 @@ interleaveAll xs ys =
   zipAll [] [] (map pure xs) (map pure ys) >>= \(l,r) => emits (l ++ r)
 
 --------------------------------------------------------------------------------
--- Effects
+-- Observing and Draining Streams
 --------------------------------------------------------------------------------
 
+||| Performs the given action on each emitted value, thus draining
+||| the stream, consuming all its output.
+export %inline
+foreach : (o -> f es ()) -> Stream s f es o -> Stream s f es ()
+foreach f = (>>= exec . f)
+
+||| Perform the given action on every chunk of output thus draining
+||| the stream, consuming all its output.
+|||
+||| For acting on values without actually draining the stream, see
+||| `observe` and `observeChunk`.
+export %inline
+foreachChunk : (List o -> f es ()) -> Stream s f es o -> Stream s f es ()
+foreachChunk f = foreach f . chunks
+
+||| Empties a stream silently dropping all output.
 export %inline
 drain : Stream s f es o -> Stream s f es q
 drain = mapChunks (const [])
@@ -639,14 +640,51 @@ observeChunk : (List o -> f es ()) -> Stream s f es o -> Stream s f es o
 observeChunk act stream =
   chunks stream >>= \vs => eval (act vs) >> emits vs
 
-||| Like `resource`, but acquires the resource in the current scope.
+--------------------------------------------------------------------------------
+-- Resource Management
+--------------------------------------------------------------------------------
+
+||| Like `bracket`, but acquires the resource in the current scope.
 export
+bracketWeak :
+     (f es r)
+  -> (r -> f [] ())
+  -> (r -> Stream s f es o)
+  -> Stream s f es o
+bracketWeak acq cleanup g = S (acquire acq cleanup >>= pull . g)
+
+||| Acquires a resource used for running a stream
+||| making sure it is properly cleaned up once the stream terminates.
+export %inline
+bracket :
+     (f es r)
+  -> (r -> f [] ())
+  -> (r -> Stream s f es o)
+  -> Stream s f es o
+bracket acq cl = stream . pull . bracketWeak acq cl
+
+||| Makes sure the given cleanup action is run once the stream
+||| terminates.
+|||
+||| Like `finally` but does not create a new inner scope.
+export
+finallyWeak : Applicative (f es) => f [] () -> Stream s f es o -> Stream s f es o
+finallyWeak cleanup = bracketWeak (pure ()) (const cleanup) . const
+
+||| Makes sure the given cleanup action is run once the stream
+||| terminates.
+export
+finally : Applicative (f es) => f [] () -> Stream s f es o -> Stream s f es o
+finally cleanup = bracket (pure ()) (const cleanup) . const
+
+||| Like `resource`, but acquires the resource in the current scope.
+export %inline
 resourceWeak :
      {auto res : Resource f r}
   -> (acquire : f es r)
   -> (r -> Stream s f es o)
   -> Stream s f es o
-resourceWeak acq g = S (acquire acq cleanup >>= pull . g)
+resourceWeak acq = bracketWeak acq cleanup
 
 ||| Acquires a resource in a new scope, closing it once the scope is
 ||| cleaned up.
@@ -656,7 +694,7 @@ resource :
   -> (acquire : f es r)
   -> (r -> Stream s f es o)
   -> Stream s f es o
-resource acq = stream . pull . resourceWeak acq
+resource acq = bracket acq cleanup
 
 export
 resourcesWeak :

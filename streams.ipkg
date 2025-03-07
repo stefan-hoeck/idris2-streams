@@ -19,6 +19,7 @@ modules = FS.Bytes
 
         , FS.Concurrent
         , FS.Concurrent.Signal
+        , FS.Concurrent.Util
 
         , FS.Internal.Bytes
         , FS.Internal.Chunk
