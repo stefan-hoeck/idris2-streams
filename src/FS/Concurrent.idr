@@ -15,6 +15,7 @@ import FS.Concurrent.Signal
 import FS.Concurrent.Util
 import FS.Pull
 import FS.Scope
+import FS.Target
 
 import IO.Async.BQueue
 import IO.Async.Channel

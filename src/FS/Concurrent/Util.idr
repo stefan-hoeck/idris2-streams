@@ -3,6 +3,7 @@ module FS.Concurrent.Util
 import Data.Linear.Deferred
 import FS.Pull
 import FS.Stream
+import FS.Target
 import IO.Async
 
 %default total

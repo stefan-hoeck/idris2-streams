@@ -13,6 +13,7 @@ import Data.Nat
 import FS.Internal.Chunk
 import FS.Pull
 import FS.Scope
+import FS.Target
 
 %default total
 
@@ -719,7 +720,7 @@ resources acqs = stream . pull . resourcesWeak acqs
 --------------------------------------------------------------------------------
 
 parameters {0 f       : List Type -> Type -> Type}
-           {auto merr : ELift1 s f}
+           {auto tgt  : Target s f}
            {auto mcnc : MCancel f}
 
   ||| Chunk-wise accumulates the values emitted by a stream.

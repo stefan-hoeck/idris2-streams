@@ -8,10 +8,10 @@ import Data.FilePath
 import Data.String
 import Data.Vect
 
+import FS
 import FS.Posix
 import FS.Posix.Internal
 import FS.Socket
-import FS.Stream as S
 import FS.System
 import IO.Async.Loop.Epoll
 import IO.Async.Loop.Posix

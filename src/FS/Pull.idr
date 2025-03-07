@@ -9,9 +9,11 @@ import Data.Linear.Ref1
 import Data.List
 import Data.Maybe
 import Data.Nat
+import Data.SortedMap
 
 import FS.Internal.Chunk
 import FS.Scope
+import FS.Target
 
 import IO.Async
 
@@ -881,11 +883,11 @@ parameters {0 f      : List Type -> Type -> Type}
 |||       `Async` and racing it with a cancelation thread (for instance,
 |||       by waiting for an operating system signal).
 export covering
-run : MCancel f => ELift1 s f => Pull f Void es r -> f es r
+run : MCancel f => Target s f => Pull f Void es r -> f es r
 run p =
-  flip (bracket $ newref Scope.empty) (\ref => close ref RootID) $ \ref => do
-    sc  <- root {es} ref
-    loop ref p sc
+  bracket newScope
+    (\(sc,ref) => loop ref p sc)
+    (\(sc,ref) => close ref sc.id)
 
 ||| Convenience alias of `run` for running a `Pull` in the `Elin s`
 ||| monad, producing a pure result.
