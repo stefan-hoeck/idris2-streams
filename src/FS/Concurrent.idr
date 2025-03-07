@@ -216,78 +216,33 @@ mergeHaltBoth s1 s2 =
 -- Parallel Joining of Streams
 --------------------------------------------------------------------------------
 
-parameters (done      : Deferred World (Result es ()))
+parameters (done      : Deferred World ())
            (available : Semaphore)
            (running   : SignalRef Nat)
-           (outcomes  : Channel (Async e es ()))
            (output    : Channel (List o))
-
-  %inline
-  stop : Result es () -> Async e es ()
-  stop = putDeferred done
-
-  %inline
-  incRunning : Async e es ()
-  incRunning = ignore $ updateAndGet running S
 
   %inline
   decRunning : Async e es ()
   decRunning =
     updateAndGet running pred >>= \case
-      0 => close outcomes
+      0 => close output
       _ => pure ()
 
-  onOutcome : Outcome es () -> Result es () -> Async e es ()
---           def onOutcome(
---               oc: Outcome[F, Throwable, Unit],
---               cancelResult: Either[Throwable, Unit]
---           ): F[Unit] =
---             oc match {
---               case Outcome.Succeeded(fu) =>
---                 cancelResult.fold(t => stop(Some(t)), _ => outcomes.send(fu).void)
---
---               case Outcome.Errored(t) =>
---                 CompositeFailure
---                   .fromResults(Left(t), cancelResult)
---                   .fold(t => stop(Some(t)), _ => F.unit)
---
---               case Outcome.Canceled() =>
---                 cancelResult.fold(t => stop(Some(t)), _ => F.unit)
---             }
---
+  inner : AsyncStream e [] o -> Async e es (Fiber [] ())
+  inner s = do
+    acquire available
+    _ <- updateAndGet running S
+    parrun
+      (await done)
+      (decRunning >> release available)
+      (foreachChunk (ignore . send output) s)
 
-  inner : AsyncStream e es o -> Async e es ()
-  -- inner asnc sc
---
---           def runInner(inner: Stream[F, O], outerScope: Scope[F]): F[Unit] =
---             F.uncancelable { _ =>
---               outerScope.lease
---                 .flatTap(_ => available.acquire >> incrementRunning)
---                 .flatMap { lease =>
---                   F.start {
---                     inner.chunks
---                       .foreach(s => output.send(s).void)
---                       .interruptWhen(done.map(_.nonEmpty))
---                       .compile
---                       .drain
---                       .guaranteeCase { oc =>
---                         lease.cancel.rethrow
---                           .guaranteeCase {
---                             case Outcome.Succeeded(fu) =>
---                               onOutcome(oc <* Outcome.succeeded(fu), Either.unit)
---
---                             case Outcome.Errored(e) =>
---                               onOutcome(oc, Either.left(e))
---
---                             case _ =>
---                               F.unit
---                           }
---                           .forceR(available.release >> decrementRunning)
---                       }
---                       .voidError
---                   }.void
---                 }
---             }
+  outer : AsyncStream e [] (AsyncStream e [] o) -> Async e [] (Fiber [] ())
+  outer ss =
+    start $
+      guarantee
+        (run $ foreach (ignore . inner) ss)
+        (putDeferred done () >> decRunning)
 
 ||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
 ||| opening at most `maxOpen` streams at any point in time.
@@ -320,85 +275,27 @@ export
 parJoin :
      (maxOpen    : Nat)
   -> {auto 0 prf : IsSucc maxOpen}
-  -> (outer      : AsyncStream e es (AsyncStream e es o))
-  -> AsyncStream e es o
+  -> (outer      : AsyncStream e [] (AsyncStream e [] o))
+  -> AsyncStream e [] o
 parJoin maxOpen outer =
   force $ do
-    done      <- deferredOf {s = World} (Result es ())
-    available <- semaphore maxOpen
-    running   <- signal (S Z)
-    outcomes  <- channelOf (Async e es ()) 0xffff_ffff
-    output    <- channelOf (List o) 0
-    pure ?fooo
+    -- signals exhaustion of the output stream (for instance, due
+    -- to a `take n`). It will interrupt evaluation of the
+    -- input stream and all child streams.
+    done      <- deferredOf {s = World} ()
 
---     def parJoin(maxOpen: Int)(implicit F: Concurrent[F]): Stream[F, O] = {
---       assert(maxOpen > 0, s"maxOpen must be > 0, was: $maxOpen")
---
---       if (maxOpen === 1) outer.flatten
---       else {
---         val fstream: F[Stream[F, O]] = for {
---           done <- SignallingRef(none[Option[Throwable]])
---           available <- Semaphore(maxOpen.toLong)
---           // starts with 1 because outer stream is running by default
---           running <- SignallingRef(1)
---           outcomes <- Channel.unbounded[F, F[Unit]]
---           output <- Channel.synchronous[F, Chunk[O]]
---         } yield {
---
---
---           def runOuter: F[Unit] =
---             F.uncancelable { _ =>
---               outer
---                 .flatMap(inner =>
---                   Pull
---                     .getScope[F]
---                     .flatMap(outerScope => Pull.eval(runInner(inner, outerScope)))
---                     .streamNoScope
---                 )
---                 .drain
---                 .interruptWhen(done.map(_.nonEmpty))
---                 .compile
---                 .drain
---                 .guaranteeCase(onOutcome(_, Either.unit) >> decrementRunning)
---                 .voidError
---             }
---
---           def outcomeJoiner: F[Unit] =
---             outcomes.stream
---               .foreach(identity)
---               .compile
---               .drain
---               .guaranteeCase {
---                 case Outcome.Succeeded(_) =>
---                   stop(None) >> output.close.void
---
---                 case Outcome.Errored(t) =>
---                   stop(Some(t)) >> output.close.void
---
---                 case Outcome.Canceled() =>
---                   stop(None) >> output.close.void
---               }
---               .voidError
---
---           def signalResult(fiber: Fiber[F, Throwable, Unit]): F[Unit] =
---             done.get.flatMap { blah =>
---               blah.flatten.fold[F[Unit]](fiber.joinWithNever)(F.raiseError)
---             }
---
---           Stream
---             .bracket(F.start(runOuter) >> F.start(outcomeJoiner)) { fiber =>
---               stop(None) >>
---                 // in case of short-circuiting, the `fiberJoiner` would not have had a chance
---                 // to wait until all fibers have been joined, so we need to do it manually
---                 // by waiting on the counter
---                 running.waitUntil(_ == 0) >>
---                 signalResult(fiber)
---             }
---             .flatMap { _ =>
---               output.stream.flatMap(Stream.chunk)
---             }
---         }
---
---         Stream.eval(fstream).flatten
---       }
---     }
+    -- concurrent slots available. child streams will wait on this
+    -- before being started.
+    available <- semaphore maxOpen
+
+    running   <- signal (S Z)
+
+    -- the input channel used for the result stream. it will be
+    -- closed when the last child was exhausted.
+    output    <- channelOf (List o) 0
+
+    -- the resulting stream should cleanup resources when it is done.
+    -- it should also finalize `done`.
+    pure $ do
+      _ <- resource (pure ())
+      receive output)

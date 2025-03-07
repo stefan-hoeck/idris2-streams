@@ -313,6 +313,21 @@ export
 evalMapChunk : (List o -> f es (List p)) -> Stream s f es o -> Stream s f es p
 evalMapChunk g s = chunks s >>= evals . g
 
+||| Performs the given action on each emitted value, thus draining
+||| the stream, consuming all its output.
+export %inline
+foreach : (o -> f es ()) -> Stream s f es o -> Stream s f es ()
+foreach f = (>>= exec . f)
+
+||| Perform the given action on every chunk of output thus draining
+||| the stream, consuming all its output.
+|||
+||| For acting on values without actually draining the stream, see
+||| `observe` and `observeChunk`.
+export
+foreachChunk : (List o -> f es ()) -> Stream s f es o -> Stream s f es ()
+foreachChunk f = foreach f . chunks
+
 ||| Chunk-wise folds all inputs using an initial
 ||| value and supplied binary operator, and emits a single element stream.
 export
@@ -611,9 +626,18 @@ export %inline
 drain : Stream s f es o -> Stream s f es q
 drain = mapChunks (const [])
 
+||| Performs the given action on every value of the stream without
+||| otherwise affecting the emitted values.
 export
 observe : (o -> f es ()) -> Stream s f es o -> Stream s f es o
 observe act stream = stream >>= \v => eval (act v) $> v
+
+||| Performs the given action on every chunk of values without
+||| otherwise affecting the emitted values.
+export
+observeChunk : (List o -> f es ()) -> Stream s f es o -> Stream s f es o
+observeChunk act stream =
+  chunks stream >>= \vs => eval (act vs) >> emits vs
 
 ||| Like `resource`, but acquires the resource in the current scope.
 export
