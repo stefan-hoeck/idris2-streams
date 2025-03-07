@@ -29,7 +29,7 @@ export covering
 parrunCase :
      (check   : Async e fs ())
   -> (finally : Outcome fs () -> Async e [] ())
-  -> Stream World (Async e) fs ()
+  -> Stream (Async e) fs ()
   -> Async e es (Fiber [] ())
 parrunCase check finally (S p) =
   start $ dropErrs $ guaranteeCase (run $ S $ Till check p) finally
@@ -44,6 +44,6 @@ export covering %inline
 parrun :
      (check   : Async e fs ())
   -> (finally : Async e [] ())
-  -> Stream World (Async e) fs ()
+  -> Stream (Async e) fs ()
   -> Async e es (Fiber [] ())
 parrun check = parrunCase check . const

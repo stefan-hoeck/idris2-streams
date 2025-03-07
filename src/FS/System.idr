@@ -7,5 +7,5 @@ import FS.Stream
 %default total
 
 export %inline
-args : ELift1 World f => Stream World f es String
+args : ELift1 World f => Stream f es String
 args = evals $ lift1 (ioToF1 getArgs)

@@ -26,15 +26,15 @@ import public IO.Async
 
 %default total
 
-||| Convenience alias for `Pull World . Async`
+||| Convenience alias for `Pull . Async`
 public export
 0 AsyncPull : Type -> Type -> List Type -> Type -> Type
-AsyncPull e = Pull World (Async e)
+AsyncPull e = Pull (Async e)
 
-||| Convenience alias for `Stream World . Async`
+||| Convenience alias for `Stream . Async`
 public export
 0 AsyncStream : Type -> List Type -> Type -> Type
-AsyncStream e = Stream World (Async e)
+AsyncStream e = Stream (Async e)
 
 ||| An empty stream that terminates after the given delay.
 export %inline

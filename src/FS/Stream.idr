@@ -16,7 +16,7 @@ import FS.Scope
 
 %default total
 
-||| A `Stream s f es o` is a newtype wrapper around a `Pull s f o es ()`.
+||| A `Stream f es o` is a newtype wrapper around a `Pull f o es ()`.
 |||
 ||| Unlike a `Pull`, which is used to sequence computations with regard
 ||| to the pull's final result, a `Stream` effectfully produces a
@@ -37,16 +37,16 @@ import FS.Scope
 ||| ignore (emits [1,2,3]) >> emits [4,5,6]
 ||| ```
 public export
-record Stream (s : Type) (f : List Type -> Type -> Type) (es : List Type) (o : Type) where
+record Stream (f : List Type -> Type -> Type) (es : List Type) (o : Type) where
   constructor S
-  pull : Pull s f o es ()
+  pull : Pull f o es ()
 
 --------------------------------------------------------------------------------
 -- Interfaces
 --------------------------------------------------------------------------------
 
 export %inline
-MErr (Stream s f) where
+MErr (Stream f) where
   succeed      = S . output1
   fail         = S . fail
   bind (S v) f = S $ bindOutput1 (pull . f) v
@@ -55,19 +55,19 @@ MErr (Stream s f) where
   appImpl f p  = bind f (`mapImpl` p)
 
 export %inline
-Semigroup (Stream s f es o) where
+Semigroup (Stream f es o) where
   S p <+> S q = S $ p >> q
 
 export %inline
-Monoid (Stream s f es o) where
+Monoid (Stream f es o) where
   neutral = S (pure ())
 
 export %inline
-ELift1 s f => ELift1 s (Stream s f) where
+ELift1 s f => ELift1 s (Stream f) where
   elift1 act = S (elift1 act >>= output1)
 
 export %inline
-ELift1 World f => HasIO (Stream World f es) where
+ELift1 World f => HasIO (Stream f es) where
   liftIO act = lift1 (ioToF1 act)
 
 --------------------------------------------------------------------------------
@@ -76,86 +76,86 @@ ELift1 World f => HasIO (Stream World f es) where
 
 ||| Returns a stream that emits a single value
 export %inline
-emit : o -> Stream s f es o
+emit : o -> Stream f es o
 emit = S . output1
 
 ||| Returns a stream that emits the given list of values (as a
 ||| single chunk).
 export %inline
-emits : List o -> Stream s f es o
+emits : List o -> Stream f es o
 emits = S . output
 
 ||| Creates an empti stream that just evaluates the supplied effect.
 ||| If the effect fails, the returned stream fails.
 export %inline
-exec : f es () -> Stream s f es o
+exec : f es () -> Stream f es o
 exec = S . Eval
 
 ||| Creates a single element stream that gets its value by evaluating the
 ||| supplied effect. If the effect fails, the returned stream fails.
 export %inline
-eval : f es o -> Stream s f es o
+eval : f es o -> Stream f es o
 eval act = S (Eval act >>= output1)
 
 ||| Like `eval` but emits the result as a single chunk
 export %inline
-evals : f es (List o) -> Stream s f es o
+evals : f es (List o) -> Stream f es o
 evals act = S (Eval act >>= output)
 
 export %inline
-evalFoldable : Foldable m => f es (m o) -> Stream s f es o
+evalFoldable : Foldable m => f es (m o) -> Stream f es o
 evalFoldable act = S (Eval act >>= foldable)
 
 ||| Creates a stream by successively applying
 ||| the given generator function to the threaded state
 ||| until a `Nothing` is returned
 export %inline
-unfold : ChunkSize => (init : st) -> (st -> Maybe (o,st)) -> Stream s f es o
+unfold : ChunkSize => (init : st) -> (st -> Maybe (o,st)) -> Stream f es o
 unfold init g = S $ unfoldMaybe init g
 
 ||| Like `unfoldMaybe` but emits values in chunks.
 export %inline
-unfoldChunk : (init : st) -> (st -> (List o, Maybe st)) -> Stream s f es o
+unfoldChunk : (init : st) -> (st -> (List o, Maybe st)) -> Stream f es o
 unfoldChunk init g = S $ unfoldChunkMaybe init g
 
 ||| Generates a stream from the given list of chunks. Empty chunks
 ||| will be silently dropped.
 export %inline
-fromChunks : List (List o) -> Stream s f es o
+fromChunks : List (List o) -> Stream f es o
 fromChunks vss = S $ fromChunks vss
 
 ||| Produces values via the given effectful computations until it returns
 ||| `Nothing`.
 export %inline
-unfoldEval : f es (Maybe o) -> Stream s f es o
+unfoldEval : f es (Maybe o) -> Stream f es o
 unfoldEval act = S $ unfoldEvalMaybe act
 
 ||| Produces values via the given effect- and stateful computations
 ||| until it returns `Nothing`.
 export %inline
-unfoldEvalST : x -> (x -> f es (Maybe (o,x))) -> Stream s f es o
+unfoldEvalST : x -> (x -> f es (Maybe (o,x))) -> Stream f es o
 unfoldEvalST st act = S $ unfoldEvalST st act
 
 ||| Produces chunks of values via the given effectful computations until
 ||| it returns `Nothing`.
 export %inline
-unfoldEvalChunk : f es (Maybe $ List o) -> Stream s f es o
+unfoldEvalChunk : f es (Maybe $ List o) -> Stream f es o
 unfoldEvalChunk act = S $ unfoldEvalChunkMaybe act
 
 ||| Infinitely repeats the given stream.
 export
-repeat : Stream s f es o -> Stream s f es o
+repeat : Stream f es o -> Stream f es o
 repeat (S v) = S $ repeat v
 
 ||| An infinite stream constantly emitting the given value
 ||| in chunks of the given size.
 export %inline
-constant : ChunkSize => o -> Stream s f es o
+constant : ChunkSize => o -> Stream f es o
 constant v = S $ fill v
 
 ||| Turns an effectful stream generator into a regular stream.
 export %inline
-force : f es (Stream s f es o) -> Stream s f es o
+force : f es (Stream f es o) -> Stream f es o
 force = join . eval
 
 ||| An infinite stream of values generated by repeatedly applying
@@ -163,15 +163,15 @@ force = join . eval
 |||
 ||| Generates chunks of the specified size.
 export %inline
-iterate : ChunkSize => o -> (o -> o) -> Stream s f es o
+iterate : ChunkSize => o -> (o -> o) -> Stream f es o
 iterate v f = S $ iterate v f
 
 export %inline
-stream : Pull s f o es () -> Stream s f es o
+stream : Pull f o es () -> Stream f es o
 stream p = S (OScope p)
 
 export %inline
-scope : Stream s f es o -> Stream s f es o
+scope : Stream f es o -> Stream f es o
 scope = stream . pull
 
 --------------------------------------------------------------------------------
@@ -180,26 +180,26 @@ scope = stream . pull
 
 ||| Prepends a chunk of values to the front of a stream
 export %inline
-cons : List o -> Stream s f es o -> Stream s f es o
+cons : List o -> Stream f es o -> Stream f es o
 cons vs = S . cons vs . pull
 
 ||| Prepends a single value to the front of a stream
 export %inline
-cons1 : o -> Stream s f es o -> Stream s f es o
+cons1 : o -> Stream f es o -> Stream f es o
 cons1 = cons . pure
 
 ||| Alias for `(<+>)`
 export %inline
-(++) : Stream s f es o -> Stream s f es o -> Stream s f es o
+(++) : Stream f es o -> Stream f es o -> Stream f es o
 (++) = (<+>)
 
 ||| Emits the first `n` values of a stream
 export %inline
-take : Nat -> Stream s f es o -> Stream s f es o
+take : Nat -> Stream f es o -> Stream f es o
 take n = stream . ignore . take n . pull
 
 export
-replicate : ChunkSize => Nat -> o -> Stream s f es o
+replicate : ChunkSize => Nat -> o -> Stream f es o
 replicate n v = S $ replicate n v
 
 ||| Emits the last `n` values of a stream
@@ -208,54 +208,54 @@ replicate n v = S $ replicate n v
 |||       the result will be emitted as a single chunk. Take memory
 |||       consumption into account when using this for very large `n`.
 export
-takeRight : (n : Nat) -> (0 p : IsSucc n) => Stream s f es o -> Stream s f es o
+takeRight : (n : Nat) -> (0 p : IsSucc n) => Stream f es o -> Stream f es o
 takeRight n (S p) = S $ takeRight n p >>= output
 
 ||| Emits values until the given predicate returns `False`.
 export
-takeWhile : (o -> Bool) -> Stream s f es o -> Stream s f es o
+takeWhile : (o -> Bool) -> Stream f es o -> Stream f es o
 takeWhile pred = stream . ignore . takeWhile pred . pull
 
 ||| Like `takeWhile` but also includes the first failure.
 export %inline
-takeThrough : (o -> Bool) -> Stream s f es o -> Stream s f es o
+takeThrough : (o -> Bool) -> Stream f es o -> Stream f es o
 takeThrough pred = stream . ignore . takeThrough pred . pull
 
 ||| Emits values until the first `Nothing` is encountered.
 export
-takeWhileJust : Stream s f es (Maybe o) -> Stream s f es o
+takeWhileJust : Stream f es (Maybe o) -> Stream f es o
 takeWhileJust = stream . ignore . takeWhileJust . pull
 
 ||| Drops `n` elements of the input, then echoes the rest.
 export
-drop : Nat -> Stream s f es o -> Stream s f es o
+drop : Nat -> Stream f es o -> Stream f es o
 drop n (S p) = S $ drop n p >>= fromMaybe (pure ())
 
 ||| Only keeps the first element of the input.
 export %inline
-head : Stream s f es o -> Stream s f es o
+head : Stream f es o -> Stream f es o
 head = take 1
 
 ||| Drops the first element of the input.
 export %inline
-tail : Stream s f es o -> Stream s f es o
+tail : Stream f es o -> Stream f es o
 tail = drop 1
 
 ||| Drops values from a stream while the given predicate returns `True`,
 ||| then echoes the rest.
 export
-dropWhile : (o -> Bool) -> Stream s f es o -> Stream s f es o
+dropWhile : (o -> Bool) -> Stream f es o -> Stream f es o
 dropWhile pred (S p) = S $ dropWhile pred p >>= fromMaybe (pure ())
 
 ||| Like `dropWhile` but also drops the first value where
 ||| the predicate returns `False`.
 export
-dropThrough : (o -> Bool) -> Stream s f es o -> Stream s f es o
+dropThrough : (o -> Bool) -> Stream f es o -> Stream f es o
 dropThrough pred (S p) = S $ dropThrough pred p >>= fromMaybe (pure ())
 
 ||| Emits the first value fulfilling the given predicate.
 export
-find : (o -> Bool) -> Stream s f es o -> Stream s f es o
+find : (o -> Bool) -> Stream f es o -> Stream f es o
 find pred (S p) =
   stream $ do
     Just (v,_) <- find pred p | Nothing => pure ()
@@ -263,111 +263,111 @@ find pred (S p) =
 
 ||| Chunk-wise maps the values produced by a stream
 export %inline
-mapChunks : (List o -> List p) -> Stream s f es o -> Stream s f es p
+mapChunks : (List o -> List p) -> Stream f es o -> Stream f es p
 mapChunks f = S . mapChunks f . pull
 
 ||| Chunk-wise maps the values produced by a stream
 export %inline
-mapChunksEval : (List o -> f es (List p)) -> Stream s f es o -> Stream s f es p
+mapChunksEval : (List o -> f es (List p)) -> Stream f es o -> Stream f es p
 mapChunksEval f = S . mapChunksEval f . pull
 
 ||| Chunk-wise consumes the output, draining the given stream.
 export %inline
-sinkChunks : (List o -> f es ()) -> Stream s f es o -> Stream s f es p
+sinkChunks : (List o -> f es ()) -> Stream f es o -> Stream f es p
 sinkChunks f = S . sinkChunks f . pull
 
 ||| Consumes the output one value at a time, draining the given stream.
 |||
 ||| See also `sinkChunks` for a potentially more efficient version.
 export %inline
-sink : (o -> f es ()) -> Stream s f es o -> Stream s f es p
+sink : (o -> f es ()) -> Stream f es o -> Stream f es p
 sink f = S . sink f . pull
 
 ||| Emits only inputs which match the supplied predicate.
 export %inline
-filter : (o -> Bool) -> Stream s f es o -> Stream s f es o
+filter : (o -> Bool) -> Stream f es o -> Stream f es o
 filter pred = S . filter pred . pull
 
 ||| Emits only inputs which do not match the supplied predicate.
 export %inline
-filterNot : (o -> Bool) -> Stream s f es o -> Stream s f es o
+filterNot : (o -> Bool) -> Stream f es o -> Stream f es o
 filterNot pred = filter (not . pred)
 
 ||| Emits only inputs for which the given function returns a `Just`
 export %inline
-mapMaybe : (o -> Maybe p) -> Stream s f es o -> Stream s f es p
+mapMaybe : (o -> Maybe p) -> Stream f es o -> Stream f es p
 mapMaybe = mapChunks . mapMaybe
 
 ||| Emits the chunks of the input stream.
 export %inline
-chunks : Stream s f es o -> Stream s f es (List o)
+chunks : Stream f es o -> Stream f es (List o)
 chunks = mapChunks pure
 
 ||| Alias for `s >>= eval . f`
 export %inline
-evalMap : (o -> f es p) -> Stream s f es o -> Stream s f es p
+evalMap : (o -> f es p) -> Stream f es o -> Stream f es p
 evalMap f s = s >>= eval . f
 
 ||| Like `evalMap`, but operates on chunks for performance.
 export
-evalMapChunk : (List o -> f es (List p)) -> Stream s f es o -> Stream s f es p
+evalMapChunk : (List o -> f es (List p)) -> Stream f es o -> Stream f es p
 evalMapChunk g s = chunks s >>= evals . g
 
 ||| Chunk-wise folds all inputs using an initial
 ||| value and supplied binary operator, and emits a single element stream.
 export
-foldChunks : p -> (p -> List o -> p) -> Stream s f es o -> Stream s f es p
+foldChunks : p -> (p -> List o -> p) -> Stream f es o -> Stream f es p
 foldChunks v g (S p) = S $ foldChunks v g p >>= output1
 
 ||| Folds all inputs using an initial value and binary operator
 export %inline
-fold : p -> (p -> o -> p) -> Stream s f es o -> Stream s f es p
+fold : p -> (p -> o -> p) -> Stream f es o -> Stream f es p
 fold v = foldChunks v . foldl
 
 ||| Accumulates all values in a stream as their sum.
 export %inline
-sum : Num o => Stream s f es o -> Stream s f es o
+sum : Num o => Stream f es o -> Stream f es o
 sum = fold 0 (+)
 
 ||| Accumulates all values in a stream as their product.
 export %inline
-product : Num o => Stream s f es o -> Stream s f es o
+product : Num o => Stream f es o -> Stream f es o
 product = fold 1 (*)
 
 ||| Maps and accumulates the values in a stream via a `Monoid`.
 |||
 ||| Note: Unlike `appendMap`, this will always result in single-element stream
 export
-foldMap : Monoid p => (o -> p) -> Stream s f es o -> Stream s f es p
+foldMap : Monoid p => (o -> p) -> Stream f es o -> Stream f es p
 foldMap g = foldChunks neutral (\v,vs => v <+> foldMap g vs)
 
 ||| Accumulates the values in a stream via a `Monoid`.
 |||
 ||| Note: Unlike `append`, this will always result in single-element stream
 export
-concat : Monoid p => Stream s f es p -> Stream s f es p
+concat : Monoid p => Stream f es p -> Stream f es p
 concat = foldChunks neutral (\v,vs => v <+> concat vs)
 
 ||| Folds all inputs using the supplied binary operator,
 ||| emitting a single-element stream, or the empty stream if
 ||| the input is empty, or the never stream if the input is non-terminating.
 export
-fold1 : (o -> o -> o) -> Stream s f es o -> Stream s f es o
+fold1 : (o -> o -> o) -> Stream f es o -> Stream f es o
 fold1 g (S p) = S $ fold1 g p >>= maybe (pure ()) output1
 
 ||| Emits the largest value found in a stream.
 export %inline
-maximum : Ord o => Stream s f es o -> Stream s f es o
+maximum : Ord o => Stream f es o -> Stream f es o
 maximum = fold1 max
 
 ||| Emits the smallest value found in a stream.
 export %inline
-minimum : Ord o => Stream s f es o -> Stream s f es o
+minimum : Ord o => Stream f es o -> Stream f es o
 minimum = fold1 min
 
 ||| Emits the number of values encountered
 export %inline
-count : Stream s f es o -> Stream s f es Nat
+count : Stream f es o -> Stream f es Nat
 count = fold 0 (const . S)
 
 ||| Maps and accumulates the values in a stream via a `Semigroup`.
@@ -375,7 +375,7 @@ count = fold 0 (const . S)
 ||| Note: Unlike `concat`, this will return an empty stream if the input
 |||       is empty.
 export %inline
-append : Semigroup o => Stream s f es o -> Stream s f es o
+append : Semigroup o => Stream f es o -> Stream f es o
 append = fold1 (<+>)
 
 ||| Maps and accumulates the values in a stream via a `Semigroup`.
@@ -383,7 +383,7 @@ append = fold1 (<+>)
 ||| Note: Unlike `foldMap`, this will return an empty stream if the input
 |||       is empty.
 export %inline
-appendMap : Semigroup p => (o -> p) -> Stream s f es o -> Stream s f es p
+appendMap : Semigroup p => (o -> p) -> Stream f es o -> Stream f es p
 appendMap f = append . map f
 
 ||| Emits `False` and halts as soon as a non-matching
@@ -392,7 +392,7 @@ appendMap f = append . map f
 ||| or hangs without emitting values if the input is
 ||| infinite and all inputs match the predicate.
 export
-all : (o -> Bool) -> Stream s f es o -> Stream s f es Bool
+all : (o -> Bool) -> Stream f es o -> Stream f es Bool
 all pred (S p) = stream $ all pred p >>= output1
 
 ||| Emits `Talse` and halts as soon as a non-matching
@@ -401,13 +401,13 @@ all pred (S p) = stream $ all pred p >>= output1
 ||| the predicate; or hangs without emitting values if the input is
 ||| infinite and all inputs do not match the predicate.
 export
-any : (o -> Bool) -> Stream s f es o -> Stream s f es Bool
+any : (o -> Bool) -> Stream f es o -> Stream f es Bool
 any pred (S p) = stream $ any pred p >>= output1
 
 ||| Wraps the values emitted by this stream in a `Just` and
 ||| marks its end with a `Nothing`.
 export
-endWithNothing : Stream s f es o -> Stream s f es (Maybe o)
+endWithNothing : Stream f es o -> Stream f es (Maybe o)
 endWithNothing s = map Just s <+> pure Nothing
 
 --------------------------------------------------------------------------------
@@ -421,8 +421,8 @@ export
 scanChunksMaybe :
      st
   -> (st -> Maybe (List o -> (List p,st)))
-  -> Stream s f es o
-  -> Stream s f es p
+  -> Stream f es o
+  -> Stream f es p
 scanChunksMaybe s1 f = stream . ignore . scanChunksMaybe s1 f . pull
 
 ||| Threads a stateful computation through all the chunks emitted by
@@ -433,8 +433,8 @@ scanChunksFull :
      (init : st)
   -> (fun  : st -> List o -> (List p,st))
   -> (end  : st -> List p)
-  -> Stream s f es o
-  -> Stream s f es p
+  -> Stream f es o
+  -> Stream f es p
 scanChunksFull init fun end (S pl) =
   S $ scanChunks init fun pl >>= output . end
 
@@ -443,23 +443,23 @@ export %inline
 scanChunks :
      (init: st)
   -> (st -> List o -> (List p,st))
-  -> Stream s f es o
-  -> Stream s f es p
+  -> Stream f es o
+  -> Stream f es p
 scanChunks init fun = S . ignore . scanChunks init fun . pull
 
 export %inline
 mapAccumulate :
      (init: st)
   -> (st -> o -> (st,p))
-  -> Stream s f es o
-  -> Stream s f es p
+  -> Stream f es o
+  -> Stream f es p
 mapAccumulate init fun = scanChunks init (mapAccum [<] fun)
 
 ||| Zips the input with a running total according to `s`, up to but
 ||| not including the current element. Thus the initial
 ||| `vp` value is the first emitted to the output:
 export
-zipWithScan : p -> (p -> o -> p) -> Stream s f es o -> Stream s f es (o,p)
+zipWithScan : p -> (p -> o -> p) -> Stream f es o -> Stream f es (o,p)
 zipWithScan vp fun =
   mapAccumulate vp $ \vp1,vo =>
     let vp2 := fun vp1 vo
@@ -467,12 +467,12 @@ zipWithScan vp fun =
 
 ||| Pairs each element in the stream with its 0-based index.
 export %inline
-zipWithIndex : Stream s f es o -> Stream s f es (o,Nat)
+zipWithIndex : Stream f es o -> Stream f es (o,Nat)
 zipWithIndex = zipWithScan 0 (\n,_ => S n)
 
 ||| Like `zipWithScan` but the running total is including the current element.
 export
-zipWithScan1 : p -> (p -> o -> p) -> Stream s f es o -> Stream s f es (o,p)
+zipWithScan1 : p -> (p -> o -> p) -> Stream f es o -> Stream f es (o,p)
 zipWithScan1 vp fun =
   mapAccumulate vp $ \vp1,vo =>
     let vp2 := fun vp1 vo
@@ -481,14 +481,14 @@ zipWithScan1 vp fun =
 ||| Zips each element of this stream with the previous element wrapped into `Some`.
 ||| The first element is zipped with `None`.
 export %inline
-zipWithPrevious : Stream s f es o -> Stream s f es (Maybe o, o)
+zipWithPrevious : Stream f es o -> Stream f es (Maybe o, o)
 zipWithPrevious = mapAccumulate Nothing $ \m,vo => (Just vo, (m, vo))
 
 
 ||| Emits the given separator between every pair of elements in the
 ||| source stream.
 export
-intersperse : (sep : o) -> Stream s f es o -> Stream s f es o
+intersperse : (sep : o) -> Stream f es o -> Stream f es o
 intersperse sep (S p) =
   S $ uncons1 p >>= \case
     Left _      => pure ()
@@ -497,37 +497,37 @@ intersperse sep (S p) =
 ||| Similar to `fold` but emits the currently accumulated state
 ||| on every output.
 export
-scan : p -> (p -> o -> p) -> Stream s f es o -> Stream s f es p
+scan : p -> (p -> o -> p) -> Stream f es o -> Stream f es p
 scan ini f = mapAccumulate ini (\t,v => let next := f t v in (next,next))
 
 ||| Emits a running total of the values emitted.
 export %inline
-runningTotal : Num o => Stream s f es o -> Stream s f es o
+runningTotal : Num o => Stream f es o -> Stream f es o
 runningTotal = scan 0 (+)
 
 ||| Emits a running count (starting at 1) of the number of values emitted.
 export %inline
-runningCount : Stream s f es o -> Stream s f es Nat
+runningCount : Stream f es o -> Stream f es Nat
 runningCount = scan 0 (const . S)
 
 --------------------------------------------------------------------------------
 -- Zipping Streams
 --------------------------------------------------------------------------------
 
-0 ZipWithLeft : Type -> (List Type -> Type -> Type) -> List Type -> (i,o : Type) -> Type
-ZipWithLeft s f es i o = List i -> Pull s f i es () -> Pull s f o es ()
+0 ZipWithLeft : (List Type -> Type -> Type) -> List Type -> (i,o : Type) -> Type
+ZipWithLeft f es i o = List i -> Pull f i es () -> Pull f o es ()
 
 %inline
-adjLeg : (Pull s f o es () -> Pull s f p es ()) -> StepLeg s f es o -> Pull s f p es ()
+adjLeg : (Pull f o es () -> Pull f p es ()) -> StepLeg f es o -> Pull f p es ()
 adjLeg f (SL p sc) = inScope sc (f p)
 
 zipWithImpl :
-     ZipWithLeft s f es o q
-  -> ZipWithLeft s f es p q
+     ZipWithLeft f es o q
+  -> ZipWithLeft f es p q
   -> (o -> p -> q)
-  -> Stream s f es o
-  -> Stream s f es p
-  -> Stream s f es q
+  -> Stream f es o
+  -> Stream f es p
+  -> Stream f es q
 zipWithImpl k1 k2 fun (S os) (S ps) =
   stream $ Prelude.do
     sc           <- scope
@@ -536,7 +536,7 @@ zipWithImpl k1 k2 fun (S os) (S ps) =
     go h1 h2 t1 t2
 
   where
-    go : List o -> List p -> StepLeg s f es o -> StepLeg s f es p -> Pull s f q es ()
+    go : List o -> List p -> StepLeg f es o -> StepLeg f es p -> Pull f q es ()
     go h1 h2 t1 t2 =
       assert_total $ case zipImpl [<] fun h1 h2 of
         Z cs => do
@@ -558,12 +558,12 @@ zipWithImpl k1 k2 fun (S os) (S ps) =
 |||
 ||| This terminates when the end of either branch is reached.
 export %inline
-zipWith : (o -> p -> q) -> Stream s f es o -> Stream s f es p -> Stream s f es q
+zipWith : (o -> p -> q) -> Stream f es o -> Stream f es p -> Stream f es q
 zipWith = zipWithImpl (\_,_ => pure ()) (\_,_ => pure ())
 
 ||| Convenience alias for `zipWith MkPair`
 export %inline
-zip : Stream s f es o -> Stream s f es p -> Stream s f es (o,p)
+zip : Stream f es o -> Stream f es p -> Stream f es (o,p)
 zip = zipWith MkPair
 
 ||| Determinsitically zips elements with the specified function, terminating
@@ -574,9 +574,9 @@ zipAllWith :
      (pad1 : o)
   -> (pad2 : p)
   -> (fund : o -> p -> q)
-  -> Stream s f es o
-  -> Stream s f es p
-  -> Stream s f es q
+  -> Stream f es o
+  -> Stream f es p
+  -> Stream f es q
 zipAllWith vo vp fun =
   zipWithImpl
     (\ho,to => output (flip fun vp <$> ho) >> mapOutput (flip fun vp) to)
@@ -587,19 +587,19 @@ zipAllWith vo vp fun =
 ||| are reached naturally, padding the left or right branch
 ||| as necessary.
 export %inline
-zipAll : o -> p -> Stream s f es o -> Stream s f es p -> Stream s f es (o,p)
+zipAll : o -> p -> Stream f es o -> Stream f es p -> Stream f es (o,p)
 zipAll vo vp = zipAllWith vo vp MkPair
 
 ||| Deterministically interleaves elements, starting on the left,
 ||| terminating when the end of either branch is reached naturally.
 export %inline
-interleave : Stream s f es o -> Stream s f es o -> Stream s f es o
+interleave : Stream f es o -> Stream f es o -> Stream f es o
 interleave xs ys = zip xs ys >>= \(x,y) => emits [x,y]
 
 ||| Deterministically interleaves elements, starting on the left,
 ||| terminating when the ends of both branches are reached naturally.
 export
-interleaveAll : Stream s f es o -> Stream s f es o -> Stream s f es o
+interleaveAll : Stream f es o -> Stream f es o -> Stream f es o
 interleaveAll xs ys =
   zipAll [] [] (map pure xs) (map pure ys) >>= \(l,r) => emits (l ++ r)
 
@@ -610,7 +610,7 @@ interleaveAll xs ys =
 ||| Performs the given action on each emitted value, thus draining
 ||| the stream, consuming all its output.
 export %inline
-foreach : (o -> f es ()) -> Stream s f es o -> Stream s f es ()
+foreach : (o -> f es ()) -> Stream f es o -> Stream f es ()
 foreach f = (>>= exec . f)
 
 ||| Perform the given action on every chunk of output thus draining
@@ -619,24 +619,24 @@ foreach f = (>>= exec . f)
 ||| For acting on values without actually draining the stream, see
 ||| `observe` and `observeChunk`.
 export %inline
-foreachChunk : (List o -> f es ()) -> Stream s f es o -> Stream s f es ()
+foreachChunk : (List o -> f es ()) -> Stream f es o -> Stream f es ()
 foreachChunk f = foreach f . chunks
 
 ||| Empties a stream silently dropping all output.
 export %inline
-drain : Stream s f es o -> Stream s f es q
+drain : Stream f es o -> Stream f es q
 drain = mapChunks (const [])
 
 ||| Performs the given action on every value of the stream without
 ||| otherwise affecting the emitted values.
 export
-observe : (o -> f es ()) -> Stream s f es o -> Stream s f es o
+observe : (o -> f es ()) -> Stream f es o -> Stream f es o
 observe act stream = stream >>= \v => eval (act v) $> v
 
 ||| Performs the given action on every chunk of values without
 ||| otherwise affecting the emitted values.
 export
-observeChunk : (List o -> f es ()) -> Stream s f es o -> Stream s f es o
+observeChunk : (List o -> f es ()) -> Stream f es o -> Stream f es o
 observeChunk act stream =
   chunks stream >>= \vs => eval (act vs) >> emits vs
 
@@ -649,8 +649,8 @@ export
 bracketWeak :
      (f es r)
   -> (r -> f [] ())
-  -> (r -> Stream s f es o)
-  -> Stream s f es o
+  -> (r -> Stream f es o)
+  -> Stream f es o
 bracketWeak acq cleanup g = S (acquire acq cleanup >>= pull . g)
 
 ||| Acquires a resource used for running a stream
@@ -659,8 +659,8 @@ export %inline
 bracket :
      (f es r)
   -> (r -> f [] ())
-  -> (r -> Stream s f es o)
-  -> Stream s f es o
+  -> (r -> Stream f es o)
+  -> Stream f es o
 bracket acq cl = stream . pull . bracketWeak acq cl
 
 ||| Makes sure the given cleanup action is run once the stream
@@ -668,13 +668,13 @@ bracket acq cl = stream . pull . bracketWeak acq cl
 |||
 ||| Like `finally` but does not create a new inner scope.
 export
-finallyWeak : Applicative (f es) => f [] () -> Stream s f es o -> Stream s f es o
+finallyWeak : Applicative (f es) => f [] () -> Stream f es o -> Stream f es o
 finallyWeak cleanup = bracketWeak (pure ()) (const cleanup) . const
 
 ||| Makes sure the given cleanup action is run once the stream
 ||| terminates.
 export
-finally : Applicative (f es) => f [] () -> Stream s f es o -> Stream s f es o
+finally : Applicative (f es) => f [] () -> Stream f es o -> Stream f es o
 finally cleanup = bracket (pure ()) (const cleanup) . const
 
 ||| Like `resource`, but acquires the resource in the current scope.
@@ -682,8 +682,8 @@ export %inline
 resourceWeak :
      {auto res : Resource f r}
   -> (acquire : f es r)
-  -> (r -> Stream s f es o)
-  -> Stream s f es o
+  -> (r -> Stream f es o)
+  -> Stream f es o
 resourceWeak acq = bracketWeak acq cleanup
 
 ||| Acquires a resource in a new scope, closing it once the scope is
@@ -692,16 +692,16 @@ export %inline
 resource :
      {auto res : Resource f r}
   -> (acquire : f es r)
-  -> (r -> Stream s f es o)
-  -> Stream s f es o
+  -> (r -> Stream f es o)
+  -> Stream f es o
 resource acq = bracket acq cleanup
 
 export
 resourcesWeak :
      {auto all : All (Resource f) rs}
   -> (acquire : All (f es) rs)
-  -> (HList rs -> Stream s f es o)
-  -> Stream s f es o
+  -> (HList rs -> Stream f es o)
+  -> Stream f es o
 resourcesWeak @{_ :: _} (a::as) g =
   resourceWeak a $ \r => resourcesWeak as (\res => g (r::res))
 resourcesWeak @{[]} [] g = g []
@@ -710,8 +710,8 @@ export
 resources :
      {auto all : All (Resource f) rs}
   -> (acquire : All (f es) rs)
-  -> (HList rs -> Stream s f es o)
-  -> Stream s f es o
+  -> (HList rs -> Stream f es o)
+  -> Stream f es o
 resources acqs = stream . pull . resourcesWeak acqs
 
 --------------------------------------------------------------------------------
@@ -727,31 +727,31 @@ parameters {0 f       : List Type -> Type -> Type}
   accumChunks :
        (init : a)
     -> (acc : a -> List o -> a)
-    -> Stream s f es o
+    -> Stream f es o
     -> f es a
   accumChunks init acc = run . foldChunks init acc . pull
 
   ||| Accumulates the values emitted by a stream.
   export covering %inline
-  accum : (init : a) -> (acc : a -> o -> a) -> Stream s f es o -> f es a
+  accum : (init : a) -> (acc : a -> o -> a) -> Stream f es o -> f es a
   accum init acc = run . fold init acc . pull
 
   ||| Accumulates the values emitted by a stream in a snoclist.
   export covering %inline
-  toSnoc : Stream s f es o -> f es (SnocList o)
+  toSnoc : Stream f es o -> f es (SnocList o)
   toSnoc = accumChunks [<] (<><)
 
   ||| Accumulates the values emitted by a stream in a list.
   export covering %inline
-  toList : Stream s f es o -> f es (List o)
+  toList : Stream f es o -> f es (List o)
   toList = map (<>> []) . toSnoc
 
   ||| Accumulates the values emitted by a stream in a list.
   export covering %inline
-  toChunks : Stream s f es o -> f es (List $ List o)
+  toChunks : Stream f es o -> f es (List $ List o)
   toChunks = map (<>> []) . accumChunks [<] (:<)
 
   ||| Runs a stream to completion, discarding all values it emits.
   export covering %inline
-  run : Stream s f es () -> f es ()
+  run : Stream f es () -> f es ()
   run = accumChunks () (\_,_ => ())

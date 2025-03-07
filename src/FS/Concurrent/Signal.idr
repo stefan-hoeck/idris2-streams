@@ -98,7 +98,7 @@ next (SR ref) n = do
 ||| Creates a continuous stream of values that reads the current
 ||| value every time a value is pulled from the stream.
 export %inline
-continuous : SignalRef a -> Stream World (Async e) es a
+continuous : SignalRef a -> Stream (Async e) es a
 continuous = repeat . eval . get
 
 ||| Creates a discrete stream of values that reads the current
@@ -108,7 +108,7 @@ continuous = repeat . eval . get
 |||       more quickly than the stream is being pulled, some values
 |||       might be lost.
 export %inline
-discrete : SignalRef a -> Stream World (Async e) es a
+discrete : SignalRef a -> Stream (Async e) es a
 discrete s = unfoldEvalST 0 (map Just . next s)
 
 ||| Blocks the fiber and observes the given signal until the given

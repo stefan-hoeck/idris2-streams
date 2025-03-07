@@ -129,16 +129,16 @@ echo n =
 echoCli : (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] ()
 echoCli n = parJoin n (replicate n cli) |> foreach logRes
 
-nats : Stream e f es Nat
+nats : Stream f es Nat
 nats = iterate 0 S
 
-range : Nat -> Stream e f es Nat
+range : Nat -> Stream f es Nat
 range n = take n nats
 
 test : (n, par : Nat) -> (0 p : IsSucc par) => Prog [Errno] ()
 test n par = parJoin par (innerRange <$> range n) |> printLnTo Stdout
   where
-    innerRange : Nat -> Stream e f es (Nat,Nat)
+    innerRange : Nat -> Stream f es (Nat,Nat)
     innerRange n = (,n) <$> range n
 
 prog : List String -> Prog [Errno] ()

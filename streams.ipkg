@@ -9,13 +9,15 @@ depends    = base         >= 0.7.0
            , bytestring
            , elin
 
-modules = FS.Bytes
+modules = FS
+        , FS.Bytes
         , FS.Elin
         , FS.ChunkSize
         , FS.Pull
         , FS.Scope
         , FS.Stream
         , FS.System
+        , FS.Target
 
         , FS.Concurrent
         , FS.Concurrent.Signal

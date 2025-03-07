@@ -38,7 +38,7 @@ a monad, so that we can get streams of streams, which - just like with
 in sequence. Here's a very simple example:
 
 ```idris
-example : Stream s f es Nat
+example : Stream f es Nat
 example = iterate Z S |> takeWhile (< 10_000_000) |> sum
 ```
 
