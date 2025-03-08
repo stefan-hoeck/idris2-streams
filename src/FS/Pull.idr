@@ -2,6 +2,7 @@ module FS.Pull
 
 import public Data.Linear.ELift1
 import public FS.ChunkSize
+import public FS.Scope
 
 import Control.Monad.Elin
 
@@ -12,8 +13,6 @@ import Data.Nat
 import Data.SortedMap
 
 import FS.Internal.Chunk
-import FS.Scope
-import FS.Target
 
 import IO.Async
 
@@ -758,7 +757,7 @@ data StepRes :
   Out  : (ss : Scope f) -> (chunk : List o) -> Pull f o es r -> StepRes f o es r
 
 parameters {0 f      : List Type -> Type -> Type}
-           {auto eff : ELift1 s f}
+           {auto tgt : Target s f}
            (ref      : Ref s (ScopeST f))
 
   ||| A single evaluation step of a `Pull`.
@@ -831,7 +830,7 @@ parameters {0 f      : List Type -> Type -> Type}
       -- Runs pull in a new child scope. The scope is setup and registered,
       -- and the result wrapped in a `WScope`.
       OScope p =>
-        openScope ref sc >>= \sc2 =>
+        openScope ref None sc >>= \sc2 =>
           step (WScope p sc2.id sc.id) sc2
 
       -- Acquires some resource in the current scope and adds its

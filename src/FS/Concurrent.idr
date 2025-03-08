@@ -201,7 +201,7 @@ mergeHaltBoth s1 s2 =
 parameters (done      : Deferred World (Result es ()))
            (available : Semaphore)
            (running   : SignalRef Nat)
-           (output    : BQueue (List o))
+           (output    : Channel (List o))
 
   -- Every time an inner or the outer stream terminates, the number
   -- of running fibers is reduced by one. If this reaches zero, no
@@ -210,10 +210,10 @@ parameters (done      : Deferred World (Result es ()))
   -- as the closed channel is empty.
   %inline
   decRunning : Async e [] ()
-  decRunning = pure ()
-    -- updateAndGet running pred >>= \case
-    --   0 => pure () -- close output
-    --   _ => pure ()
+  decRunning =
+    updateAndGet running pred >>= \case
+      0 => close output
+      _ => pure ()
 
   -- Runs an inner stream on its own fiber until it terminates gracefully
   -- or fails with an error. In case of an error, the `done` flag is set
@@ -223,12 +223,12 @@ parameters (done      : Deferred World (Result es ()))
   inner s =
     uncancelable $ \poll => do
       -- poll (acquire available) -- wait for a fiber to become available
-      -- modify running S         -- increase the number of running fibers
+      modify running S         -- increase the number of running fibers
       poll $ ignore $ parrunCase
         (awaitRes done)
         (\o => putErr done o >> decRunning)
         -- (\o => putErr done o >> decRunning >> release available)
-        (foreachChunk (enqueue output) s)
+        (foreachChunk (ignore . send output) s)
 
   -- Runs the outer stream on its own fiber until it terminates gracefully
   -- or fails with an error.
@@ -240,7 +240,7 @@ parameters (done      : Deferred World (Result es ()))
       (awaitRes done)
       (\o => putErr done o >> decRunning)
       -- (\o => putErr done o >> decRunning >> until running (== 0))
-      (foreach inner ss)
+      (foreach (inner . scope) ss)
 
 ||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
 ||| opening at most `maxOpen` streams at any point in time.
@@ -284,7 +284,7 @@ parJoin maxOpen out =
 
     -- the input channel used for the result stream. it will be
     -- closed when the last child was exhausted.
-    output    <- bqueueOf (List o) 1000
+    output    <- channelOf (List o) 0
 
     fbr       <- outer done available running output out
     -- the resulting stream should cleanup resources when it is done.
@@ -292,4 +292,4 @@ parJoin maxOpen out =
     pure $
       finally
         (putDeferred done (Right ()) >> wait fbr)
-        (interruptOn (awaitRes done) (dequeue output))
+        (interruptOn (awaitRes done) (receive output))

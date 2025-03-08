@@ -4,7 +4,6 @@ import Data.Linear.Deferred
 import Data.Linear.Ref1
 
 import FS.Stream
-import FS.Target
 
 import IO.Async
 

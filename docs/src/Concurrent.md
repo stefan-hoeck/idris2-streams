@@ -136,10 +136,10 @@ range : Nat -> Stream f es Nat
 range n = take n nats
 
 test : (n, par : Nat) -> (0 p : IsSucc par) => Prog [Errno] ()
-test n par = parJoin par (innerRange <$> range n) |> printLnTo Stdout
+test n par = merge (innerRange <$> [0..par]) |> count |> printLnTo Stdout
   where
     innerRange : Nat -> Stream f es (Nat,Nat)
-    innerRange n = (,n) <$> range n
+    innerRange x = (,x) <$> range n
 
 prog : List String -> Prog [Errno] ()
 prog ["server", n] =

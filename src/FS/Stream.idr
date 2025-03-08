@@ -4,6 +4,7 @@ import public Control.Monad.MCancel
 import public Control.Monad.Resource
 import public Data.Linear.ELift1
 import public FS.ChunkSize
+import public FS.Scope
 
 import Data.Linear.Deferred
 import Data.Linear.Ref1
@@ -12,8 +13,6 @@ import Data.Maybe
 import Data.Nat
 import FS.Internal.Chunk
 import FS.Pull
-import FS.Scope
-import FS.Target
 
 %default total
 

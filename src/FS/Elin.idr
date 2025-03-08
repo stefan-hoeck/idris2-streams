@@ -2,7 +2,6 @@ module FS.Elin
 
 import public Control.Monad.Elin
 import public FS.Stream
-import public FS.Target
 import FS.Pull
 
 %default total
