@@ -136,7 +136,7 @@ range : Nat -> Stream f es Nat
 range n = take n nats
 
 test : (n, par : Nat) -> (0 p : IsSucc par) => Prog [Errno] ()
-test n par = merge (innerRange <$> [0..par]) |> count |> printLnTo Stdout
+test n (S par) = merge (innerRange <$> [0..par]) |> count |> printLnTo Stdout
   where
     innerRange : Nat -> Stream f es (Nat,Nat)
     innerRange x = (,x) <$> range n

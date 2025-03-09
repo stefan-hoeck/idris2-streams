@@ -6,6 +6,11 @@ import FS.Pull
 
 %default total
 
+fromOutcome : Monoid a => Outcome es a -> Result es a
+fromOutcome (Succeeded res) = Right res
+fromOutcome (Error err)     = Left err
+fromOutcome Canceled        = Right neutral
+
 fromResult : Result [] a -> a
 fromResult (Right res) = res
 fromResult (Left err)  = absurd err
@@ -13,7 +18,7 @@ fromResult (Left err)  = absurd err
 ||| Runs a `Pull` to completion, collecting all output in a list.
 export covering
 pullListRes : (forall s . Pull (Elin s) o es ()) -> Result es (List o)
-pullListRes p = pullElin ((<>> []) <$> foldChunks [<] (<><) p)
+pullListRes p = fromOutcome $ pullElin ((<>> []) <$> foldChunks [<] (<><) p)
 
 ||| Like `pullListRes`, but without the possibility of failure.
 export covering
@@ -24,7 +29,7 @@ pullList p = fromResult $ pullListRes p
 ||| This allows us to observe the chunk structure of a `Pull`.
 export covering
 pullChunkRes : (forall s . Pull (Elin s) o es ()) -> Result es (List $ List o)
-pullChunkRes p = pullElin ((<>> []) <$> foldChunks [<] (:<) p)
+pullChunkRes p = fromOutcome $ pullElin ((<>> []) <$> foldChunks [<] (:<) p)
 
 ||| Like `echunks`, but without the possibility of failure.
 export covering

@@ -106,7 +106,7 @@ data Pull :
 
   ||| Runs the given `Pull` in a new child scope. The optional second argument
   ||| is used to check, if the scope has been interrupted.
-  OScope : Pull f o es r -> Pull f o es r
+  OScope : Interrupt f -> Pull f o es r -> Pull f o es r
 
   ||| Safe resource management: Once the given resource has been acquired,
   ||| it is released via the given cleanup hook once the current scope ends.
@@ -128,13 +128,8 @@ data Pull :
   ||| is exhausted. See `stepLeg` and `StepLeg`.
   IScope : Scope f -> Pull f o es r -> Pull f o es r
 
-  ||| Interrupts evaluation of the given `Pull` as soon as
-  ||| the given `Deferred` is set.
-  |||
-  ||| This is only available in the `Async` monad because it
-  ||| it involves racing stream evaluation against reading the
-  ||| deferred value.
-  Till   : Async e es () -> Pull (Async e) o es () -> Pull (Async e) o es ()
+  ||| Continues with the second pull in case the first is interrupted.
+  OnIntr : Pull f o es r -> Lazy (Pull f o es r) -> Pull f o es r
 
 ||| A (partially evaluated) `Pull` plus the scope it should be
 ||| evaluated in.
@@ -751,7 +746,7 @@ data StepRes :
     -> (r  : Type)
     -> Type where
   ||| Stream completed successfully with a result
-  Done : (ss : Scope f) -> (res : r) -> StepRes f o es r
+  Done : (ss : Scope f) -> (res : Outcome es r) -> StepRes f o es r
 
   ||| Stream produced some output
   Out  : (ss : Scope f) -> (chunk : List o) -> Pull f o es r -> StepRes f o es r
@@ -769,14 +764,15 @@ parameters {0 f      : List Type -> Type -> Type}
   -- data constructors of `Pull`. The `Scope` argument is the resource
   -- scope we are currently working with.
   export covering
-  step : Pull f o es r -> Scope f -> f es (StepRes f o es r)
-  step p sc =
+  step : Pull f o es r -> Scope f -> f [] (StepRes f o es r)
+  step p sc = do
+    False <- isInterrupted sc.interrupt | True => pure (Done sc Canceled)
     case p of
       -- We got a final result, so we just return it.
-      Val res    => pure (Done sc res)
+      Val res    => pure (Done sc $ Succeeded res)
 
       -- An exception occured so we raise it in the `f` monad.
-      Err x      => fail x
+      Err x      => pure (Done sc $ Error x)
 
       -- The pull produced som output. We return it together with an
       -- empty continuation.
@@ -784,7 +780,7 @@ parameters {0 f      : List Type -> Type -> Type}
 
       -- We evaluate the given effect, wrapping it in a `Done` in
       -- case it succeeds.
-      Eval act   => Done sc <$> act
+      Eval act   => Done sc <$> raceInterrupt sc.interrupt act
 
       -- We step the wrapped pull. In case it produces some output,
       -- we wrap the output and continuation in a `Done . Right`. In case
@@ -792,21 +788,11 @@ parameters {0 f      : List Type -> Type -> Type}
       -- a `Done . Left`.
       Uncons p   =>
         step p sc >>= \case
-          Done sc res     => pure (Done sc $ Left res)
-          Out  sc chunk x => pure (Done sc $ Right (chunk, x))
-
-      -- We try and step the wrapped pull. In case of an error, we wrap
-      -- it in a `Done . Left`. In case of a final result, we return the
-      -- result wrapped ina `Done . Right`. In case of more output,
-      -- the output is returned and the continuation pull is again wrapped
-      -- in an `Att`. This makes sure that the pull produces output until
-      -- the first error or it is exhausted or interrputed.
-      Att {fs} x =>
-        attempt {fs} (step x sc) >>= \case
-          Left y  => pure (Done sc $ Left y)
-          Right y => case y of
-            Done ss res    => pure (Done ss $ Right res)
-            Out ss chunk z => pure (Out ss chunk (Att z))
+          Done sc res     => case res of
+            Succeeded r => pure (Done sc $ Succeeded $ Left r)
+            Error x     => pure (Done sc $ Error x)
+            Canceled    => pure (Done sc Canceled)
+          Out  sc chunk x => pure (Done sc $ Succeeded $ Right (chunk, x))
 
       -- Monadic bind: We step the wrapped pull, passing the final result
       -- to function `g`. In case of some output being emitted, we return
@@ -814,31 +800,49 @@ parameters {0 f      : List Type -> Type -> Type}
       -- of interruption, we pass on the interruption.
       Bind x g   =>
         step x sc >>= \case
-          Done sc r  => step (g r) sc
+          Done sc o  => case o of
+            Succeeded r => step (g r) sc
+            Error x     => pure (Done sc $ Error x)
+            Canceled    => pure (Done sc Canceled)
           Out sc v p => pure $ Out sc v (Bind p g)
+
+      -- We try and step the wrapped pull. In case of an error, we wrap
+      -- it in a `Done . Left`. In case of a final result, we return the
+      -- result wrapped ina `Done . Right`. In case of more output,
+      -- the output is returned and the continuation pull is again wrapped
+      -- in an `Att`. This makes sure that the pull produces output until
+      -- the first error or it is exhausted or interrputed.
+      Att x =>
+        step x sc >>= \case
+          Done sc res     => case res of
+            Succeeded r => pure (Done sc $ Succeeded $ Right r)
+            Error x     => pure (Done sc $ Succeeded $ Left x)
+            Canceled    => pure (Done sc Canceled)
+          Out  sc chunk x => pure (Out sc chunk (Att x))
 
       -- Race completion of the `deferred` value against evaluating
       -- the given pull. Currently, if the race is canceled, this
       -- is treated as the pull being interrupted.
-      Till interrupt p =>
-        race2 (step p sc) interrupt >>= \case
-          Just (Left v) => case v of
-            Done ss res    => pure (Done ss res)
-            Out ss chunk x => pure (Out ss chunk (Till interrupt x))
-          _                => pure (Done sc ())
+      OnIntr p p2 =>
+        step p sc >>= \case
+          Out sc v q => pure (Out sc v $ OnIntr q p2)
+          Done sc o  => case o of
+            Succeeded v => pure $ Done sc (Succeeded v)
+            Error x     => pure $ Done sc (Error x)
+            Canceled    => step p2 sc
 
       -- Runs pull in a new child scope. The scope is setup and registered,
       -- and the result wrapped in a `WScope`.
-      OScope p =>
-        openScope ref None sc >>= \sc2 =>
+      OScope i p =>
+        openScope ref i sc >>= \sc2 =>
           step (WScope p sc2.id sc.id) sc2
 
       -- Acquires some resource in the current scope and adds its
       -- cleanup hook to the current scope.
       Acquire alloc cleanup => do
-        res <- alloc
-        sc2 <- addHook ref sc (cleanup res)
-        pure (Done sc2 res)
+        Right r <- attempt {fs = []} alloc | Left x => pure $ Done sc (Error x)
+        sc2     <- addHook ref sc (cleanup r)
+        pure (Done sc2 $ Succeeded r)
 
       -- Runs the given pull `p` in scope `id`, switching back to scope `rs`
       -- once the pull is exhausted.
@@ -851,45 +855,51 @@ parameters {0 f      : List Type -> Type -> Type}
         -- We now try and step pull `p` in the scope we looked up. In case of
         -- an error, when the scope was interrupted, or when the `Pull` was done,
         -- we close `cur` (if `closeAfterUse` equals `True`).
-        attempt (step p cur) >>= \case
-          Right (Out scope hd tl) => pure (Out scope hd $ WScope tl id rs)
-          Right (Done outScope r) => do
+        step p cur >>= \case
+          Out scope hd tl => pure (Out scope hd $ WScope tl id rs)
+          Done outScope o => do
             nextScope <- fromMaybe outScope <$> findScope ref rs
-            when closeAfterUse (weakenErrors $ close ref cur.id)
-            pure $ Done nextScope r
-          Left  x => do
-            when closeAfterUse (weakenErrors $ close ref cur.id)
-            fail x
+            when closeAfterUse (close ref cur.id)
+            pure $ Done nextScope o
 
       -- This just returns the current scope.
-      GScope => pure (Done sc sc)
+      GScope => pure (Done sc $ Succeeded sc)
 
       -- Continues running the given pull in the given scope.
       IScope sc2 p => step p sc2
 
   covering
-  loop : Pull f Void es r -> Scope f -> f es r
+  loop : Pull f Void es r -> Scope f -> f [] (Outcome es r)
   loop p sc =
     step p sc >>= \case
       Done _ v       => pure v
       Out  sc2 [] p2 => loop p2 sc2
 
-||| Runs a `Pull` to completion, eventually producing
-||| a value of type `r`.
-|||
-||| Note: In case of an infinited stream, this will loop forever.
-|||       In order to cancel the evaluation, consider using
-|||       `Async` and racing it with a cancelation thread (for instance,
-|||       by waiting for an operating system signal).
-export covering
-run : MCancel f => Target s f => Pull f Void es r -> f es r
-run p =
-  bracket newScope
-    (\(sc,ref) => loop ref p sc)
-    (\(sc,ref) => close ref sc.id)
+parameters {auto mcn : MCancel f}
+           {auto tgt : Target s f}
+
+  export covering
+  runIn : Scope f -> Pull f Void es r -> f [] (Outcome es r)
+  runIn sc p = do
+    ref <- scopes
+    loop ref p sc
+
+  ||| Runs a `Pull` to completion, eventually producing
+  ||| a value of type `r`.
+  |||
+  ||| Note: In case of an infinited stream, this will loop forever.
+  |||       In order to cancel the evaluation, consider using
+  |||       `Async` and racing it with a cancelation thread (for instance,
+  |||       by waiting for an operating system signal).
+  export covering
+  run : Pull f Void es r -> f [] (Outcome es r)
+  run p =
+    bracket newScope
+      (\(sc,ref) => loop ref p sc)
+      (\(sc,ref) => close ref sc.id)
 
 ||| Convenience alias of `run` for running a `Pull` in the `Elin s`
 ||| monad, producing a pure result.
 export %inline covering
-pullElin : (forall s . Pull (Elin s) Void es r) -> Result es r
-pullElin f = runElin (run f)
+pullElin : (forall s . Pull (Elin s) Void es r) -> Outcome es r
+pullElin f = either absurd id $ runElin (run f)

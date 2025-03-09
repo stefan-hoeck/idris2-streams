@@ -168,11 +168,15 @@ iterate v f = S $ iterate v f
 
 export %inline
 stream : Pull f o es () -> Stream f es o
-stream p = S (OScope p)
+stream p = S (OScope None p)
 
 export %inline
 scope : Stream f es o -> Stream f es o
 scope = stream . pull
+
+export %inline
+currentScope : Stream f es (Scope f)
+currentScope = S (scope >>= output1)
 
 --------------------------------------------------------------------------------
 -- Combinators
@@ -610,7 +614,7 @@ interleaveAll xs ys =
 ||| Performs the given action on each emitted value, thus draining
 ||| the stream, consuming all its output.
 export %inline
-foreach : (o -> f es ()) -> Stream f es o -> Stream f es ()
+foreach : (o -> f es ()) -> Stream f es o -> Stream f es q
 foreach f = (>>= exec . f)
 
 ||| Perform the given action on every chunk of output thus draining
@@ -619,7 +623,7 @@ foreach f = (>>= exec . f)
 ||| For acting on values without actually draining the stream, see
 ||| `observe` and `observeChunk`.
 export %inline
-foreachChunk : (List o -> f es ()) -> Stream f es o -> Stream f es ()
+foreachChunk : (List o -> f es ()) -> Stream f es o -> Stream f es q
 foreachChunk f = foreach f . chunks
 
 ||| Empties a stream silently dropping all output.
@@ -723,18 +727,18 @@ parameters {0 f       : List Type -> Type -> Type}
            {auto mcnc : MCancel f}
 
   ||| Chunk-wise accumulates the values emitted by a stream.
-  export covering %inline
-  accumChunks :
-       (init : a)
-    -> (acc : a -> List o -> a)
-    -> Stream f es o
-    -> f es a
-  accumChunks init acc = run . foldChunks init acc . pull
+  export covering
+  accumChunks : (ini : a) -> (acc : a -> List o -> a) -> Stream f es o -> f es a
+  accumChunks init acc (S p) =
+    weakenErrors (run (foldChunks init acc p)) >>= \case
+      Succeeded v => pure v
+      Error x     => fail x
+      Canceled    => pure init
 
   ||| Accumulates the values emitted by a stream.
   export covering %inline
   accum : (init : a) -> (acc : a -> o -> a) -> Stream f es o -> f es a
-  accum init acc = run . fold init acc . pull
+  accum init acc = accumChunks init (foldl acc)
 
   ||| Accumulates the values emitted by a stream in a snoclist.
   export covering %inline

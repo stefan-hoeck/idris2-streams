@@ -15,7 +15,6 @@ import FS.Concurrent.Signal
 import FS.Concurrent.Util
 import FS.Pull
 import FS.Scope
-import FS.Target
 
 import IO.Async.BQueue
 import IO.Async.Channel
@@ -69,8 +68,8 @@ receive = unfoldEvalChunk . receive
 ||| Interrupts the given stream when the given asynchronous
 ||| computation completes.
 export %inline
-interruptOn : Async e es () -> AsyncStream e es o -> AsyncStream e es o
-interruptOn check (S p) = S (Till check p)
+interruptOn : Deferred World a -> AsyncStream e es o -> AsyncStream e es o
+interruptOn check (S p) = S (interruptPull check p)
 
 ||| Runs the first stream until it terminates or the second
 ||| stream emits a `True`.
@@ -79,20 +78,16 @@ interruptWhen :
      AsyncStream e es o
   -> AsyncStream e [] Bool
   -> AsyncStream e es o
-interruptWhen str stop =
+interruptWhen str stop = do
+  sc <- currentScope
   force $ do
     doneL <- deferredOf ()
     doneR <- deferredOf ()
-    pure (watched doneL doneR)
-
-  where
-    watched : (doneL, doneR : Deferred World ()) -> AsyncStream e es o
-    watched doneL doneR =
-      assert_total $
-        bracket
-          (parrun (await doneL) (pure ()) (any id stop >>= \_ => putDeferred doneR ()))
-          (\f => putDeferred doneL () >> wait f)
-          (\_ => interruptOn (await doneR) str)
+    let watcher := foreachChunk (\_ => putDeferred doneR ()) (any id stop)
+    pure $ bracket
+      (assert_total $ parrun sc doneL (pure ()) watcher)
+      (\f => putDeferred doneL () >> wait f)
+      (\_ => interruptOn doneR str)
 
 ||| Runs the given stream until the given duration expires.
 export
@@ -100,7 +95,7 @@ timeout : TimerH e => Clock Duration -> AsyncStream e es o -> AsyncStream e es o
 timeout dur str = S $ do
   def <- deferredOf ()
   _   <- acquire (start {es = []} $ sleep dur >> putDeferred def ()) cancel
-  Till (await def) str.pull
+  pull (interruptOn def str)
 
 --------------------------------------------------------------------------------
 -- Merging Streams
@@ -110,6 +105,7 @@ parameters (chnl : Channel (List o))
            (done : Deferred World ())
            (res  : Deferred World (Result es ()))
            (sema : IORef Nat)
+           (sc   : Scope (Async e))
 
   -- Handles the outcome of running one of the input streams.
   -- in case the stream terminated with an error, `res` is immediately
@@ -128,11 +124,7 @@ parameters (chnl : Channel (List o))
   -- The running input stream writes all chunks of output to the channel.
   covering
   child : AsyncStream e es o -> Async e es (Fiber [] ())
-  child s =
-       evalMapChunk (map pure . send chnl) s
-    |> takeWhile (== Sent)
-    |> drain
-    |> parrunCase (await done) out
+  child s = foreachChunk (ignore . send chnl) s |> parrunCase sc done out
 
   -- starts running all input streams in parallel, and reads chunks of
   -- output from the bounded queue `que`.
@@ -142,7 +134,7 @@ parameters (chnl : Channel (List o))
       bracket
         (traverse child ss)
         (\fs => putDeferred done () >> traverse_ wait fs)
-        (\_  => interruptOn (awaitRes res) (receive chnl))
+        (\_  => interruptOn res (receive chnl))
 
 ||| Runs the given streams in parallel and nondeterministically
 ||| (but chunkc-wise) interleaves their output.
@@ -154,8 +146,8 @@ parameters (chnl : Channel (List o))
 export
 merge : List (AsyncStream e es o) -> AsyncStream e es o
 merge []  = neutral
-merge [s] = s
-merge ss  =
+merge ss  = Prelude.do
+  sc <- currentScope
   force $ Prelude.do
     -- A bounded queue where the running streams will write their output
     -- to. There will be no buffering: evaluating the streams will block
@@ -174,7 +166,7 @@ merge ss  =
     -- Semaphore-like counter keeping track of the number of input streams
     -- that are still running.
     sema <- newref (length ss)
-    pure (merged chnl done res sema ss)
+    pure (merged chnl done res sema sc ss)
 
 ||| Runs the given streams in parallel and nondeterministically interleaves
 ||| their output.
@@ -202,6 +194,7 @@ parameters (done      : Deferred World (Result es ()))
            (available : Semaphore)
            (running   : SignalRef Nat)
            (output    : Channel (List o))
+           (sc        : Scope (Async e))
 
   -- Every time an inner or the outer stream terminates, the number
   -- of running fibers is reduced by one. If this reaches zero, no
@@ -224,8 +217,8 @@ parameters (done      : Deferred World (Result es ()))
     uncancelable $ \poll => do
       -- poll (acquire available) -- wait for a fiber to become available
       modify running S         -- increase the number of running fibers
-      poll $ ignore $ parrunCase
-        (awaitRes done)
+      poll $ ignore $ parrunCase sc
+        done
         (\o => putErr done o >> decRunning)
         -- (\o => putErr done o >> decRunning >> release available)
         (foreachChunk (ignore . send output) s)
@@ -236,8 +229,8 @@ parameters (done      : Deferred World (Result es ()))
   covering
   outer : AsyncStream e es (AsyncStream e es o) -> Async e es (Fiber [] ())
   outer ss =
-    parrunCase
-      (awaitRes done)
+    parrunCase sc
+      done
       (\o => putErr done o >> decRunning)
       -- (\o => putErr done o >> decRunning >> until running (== 0))
       (foreach (inner . scope) ss)
@@ -269,7 +262,8 @@ parJoin :
   -> {auto 0 prf : IsSucc maxOpen}
   -> (outer      : AsyncStream e es (AsyncStream e es o))
   -> AsyncStream e es o
-parJoin maxOpen out =
+parJoin maxOpen out = do
+  sc <- currentScope
   assert_total $ force $ do
     -- signals exhaustion of the output stream (for instance, due
     -- to a `take n`). It will interrupt evaluation of the
@@ -286,10 +280,10 @@ parJoin maxOpen out =
     -- closed when the last child was exhausted.
     output    <- channelOf (List o) 0
 
-    fbr       <- outer done available running output out
+    fbr       <- outer done available running output sc out
     -- the resulting stream should cleanup resources when it is done.
     -- it should also finalize `done`.
     pure $
       finally
         (putDeferred done (Right ()) >> wait fbr)
-        (interruptOn (awaitRes done) (receive output))
+        (interruptOn done (receive output))

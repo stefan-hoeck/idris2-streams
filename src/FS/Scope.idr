@@ -30,7 +30,7 @@ import IO.Async
 ||| whether the current scope has been interrupted or not. In addition, in
 ||| case of wrapped effectful computations - which might be potentially long
 ||| running (think of a timer or waiting for a connection or a mouse click) -
-||| the wrapped effect is raced against `awaitInterruption`.
+||| the wrapped effect is raced against the stream being interrupted.
 public export
 data Interrupt : (f : List Type -> Type -> Type) -> Type where
   None : Interrupt f
@@ -125,23 +125,23 @@ public export
 interface ELift1 s f => Target s f | f where
 
   ||| Initial scope reference for running a stream.
-  scopes : f es (Ref s (ScopeST f))
+  scopes : f [] (Ref s (ScopeST f))
 
   ||| Combines two interruption handlers
-  combineInterrupts : (x,y : Interrupt f) -> f es (Interrupt f, List (f [] ()))
+  combineInterrupts : (x,y : Interrupt f) -> f [] (Interrupt f, List (f [] ()))
 
   ||| Returns `True` if the stream has been interrupted.
-  isInterrupted : Interrupt f -> f es Bool
+  isInterrupted : Interrupt f -> f [] Bool
 
   ||| Races an effectful computation against stream interruption
-  raceInterrupt : Interrupt f -> f es a -> f es (Maybe a)
+  raceInterrupt : Interrupt f -> f es a -> f [] (Outcome es a)
 
 export %inline
 Target s (Elin s) where
   scopes = newref empty
   combineInterrupts None None = pure (None, [])
   isInterrupted _ = pure False
-  raceInterrupt _ act = map Just act
+  raceInterrupt _ = map toOutcome . attempt
 
 %noinline
 asyncScopes : IORef (ScopeST $ Async e)
@@ -162,9 +162,11 @@ Target World (Async e) where
   isInterrupted None  = pure False
   isInterrupted (I d) = completed d
 
-  raceInterrupt None  act = map Just act
+  raceInterrupt None  act = toOutcome <$> attempt act
   raceInterrupt (I d) act =
-    (>>= either Just (const Nothing)) <$> race2 act (await d)
+    racePair {fs = []} act (await d) >>= \case
+      Left  (o,x) => cancel x $> o
+      Right (x,_) => cancel x $> Canceled
 
 --------------------------------------------------------------------------------
 -- Handling Scopes
@@ -209,7 +211,7 @@ parameters {0    f   : List Type -> Type -> Type}
 
   ||| Returns the current state of the root scope
   export %inline
-  root : f es (Scope f)
+  root : f [] (Scope f)
   root = do
     rid <- (SID . unsafeVal) <$> token
     let r := S rid rid [] [] [] None
@@ -222,7 +224,7 @@ parameters {0    f   : List Type -> Type -> Type}
   ||| If the parent scope has already been closed, its closest
   ||| open ancestor will be used as the new scope's parent instead.
   export
-  openScope : Interrupt f -> Scope f -> f es (Scope f)
+  openScope : Interrupt f -> Scope f -> f [] (Scope f)
   openScope int par = do
     sid          <- (SID . unsafeVal) <$> token
     (sint, cncl) <- combineInterrupts par.interrupt int
@@ -251,13 +253,13 @@ parameters {0    f   : List Type -> Type -> Type}
 
   ||| Lookup the scope with the given ID.
   export %inline
-  findScope : ScopeID -> f es (Maybe $ Scope f)
+  findScope : ScopeID -> f [] (Maybe $ Scope f)
   findScope id = lookup id <$> readref ref
 
   ||| Adds a new cleanup hook to the given scope or its closest
   ||| open parent scope.
   export %inline
-  addHook : Scope f -> f [] () -> f es (Scope f)
+  addHook : Scope f -> f [] () -> f [] (Scope f)
   addHook sc hook =
     Ref1.update ref $ \ss =>
      let res := {cleanup $= (hook ::)} (openSelfOrAncestor ss sc)
@@ -266,7 +268,7 @@ parameters {0    f   : List Type -> Type -> Type}
 ||| Creates a new root scope and returns it together with the set of
 ||| scopes for the given effect type.
 export %inline
-newScope : Target s f => f es (Scope f, Ref s (ScopeST f))
+newScope : Target s f => f [] (Scope f, Ref s (ScopeST f))
 newScope = do
   ref <- scopes
   sc  <- root ref

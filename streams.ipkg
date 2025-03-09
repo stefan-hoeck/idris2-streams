@@ -17,7 +17,6 @@ modules = FS
         , FS.Scope
         , FS.Stream
         , FS.System
-        , FS.Target
 
         , FS.Concurrent
         , FS.Concurrent.Signal

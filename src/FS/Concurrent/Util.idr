@@ -3,7 +3,6 @@ module FS.Concurrent.Util
 import Data.Linear.Deferred
 import FS.Pull
 import FS.Stream
-import FS.Target
 import IO.Async
 
 %default total
@@ -20,6 +19,15 @@ putErr : Deferred World (Result es ()) -> Outcome es () -> Async e [] ()
 putErr def (Error x) = putDeferred def (Left x)
 putErr def _         = pure ()
 
+||| Runs the given pull in a new child scope and interrupts
+||| its evaluation once the given `Deferred` is completed.
+export
+interruptPull :
+     Deferred World a
+  -> Pull (Async e) o es ()
+  -> Pull (Async e) o es ()
+interruptPull def p = OnIntr (OScope (I def) p) (pure ())
+
 ||| Concurrently runs the given stream until it either terminates or
 ||| is interrupted by `check`.
 |||
@@ -28,12 +36,16 @@ putErr def _         = pure ()
 ||| implementing other combinators,
 export covering
 parrunCase :
-     (check   : Async e fs ())
+     (sc      : Scope (Async e))
+  -> (check   : Deferred World a)
   -> (finally : Outcome fs () -> Async e [] ())
-  -> Stream (Async e) fs ()
+  -> Stream (Async e) fs Void
   -> Async e es (Fiber [] ())
-parrunCase check finally (S p) =
-  start $ dropErrs $ guaranteeCase (run $ S $ Till check p) finally
+parrunCase sc check finally (S p) =
+  start $ ignore $ guaranteeCase (runIn sc $ interruptPull check p) $ \case
+    Succeeded res => finally res
+    Canceled      => finally Canceled
+    Error err impossible
 
 ||| Concurrently runs the given stream until it either terminates or
 ||| is interrupted by `check`.
@@ -43,8 +55,9 @@ parrunCase check finally (S p) =
 ||| implementing other combinators,
 export covering %inline
 parrun :
-     (check   : Async e fs ())
+     (sc      : Scope (Async e))
+  -> (check   : Deferred World a)
   -> (finally : Async e [] ())
-  -> Stream (Async e) fs ()
+  -> Stream (Async e) fs Void
   -> Async e es (Fiber [] ())
-parrun check = parrunCase check . const
+parrun sc check = parrunCase sc check . const

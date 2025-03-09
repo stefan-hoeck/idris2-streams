@@ -1,7 +1,6 @@
 module Test.FS.Util
 
 import public FS.Elin
-import public FS.Target
 import public Hedgehog
 import Data.Linear.Ref1
 import FS.Internal.Chunk
