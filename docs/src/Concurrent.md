@@ -26,7 +26,7 @@ Prog = AsyncStream Poll
 covering
 runProg : Prog [Errno] () -> IO ()
 runProg prog =
-  epollApp $ run (handle [eval . stderrLn . interpolate] prog)
+  simpleApp $ run (handle [eval . stderrLn . interpolate] prog)
 ```
 
 ```idris
@@ -135,11 +135,19 @@ nats = iterate 0 S
 range : Nat -> Stream f es Nat
 range n = take n nats
 
+emitted : List (Nat,Nat) -> Async Poll es ()
+emitted (h::t) = putStrLn "emitting \{show h}"
+emitted _      = putStrLn "empty chunk"
+
+consumed : List (Nat,Nat) -> Async Poll es ()
+consumed (h::t) = putStrLn "consumed \{show h}"
+consumed _      = putStrLn "empty chunk"
+
 test : (n, par : Nat) -> (0 p : IsSucc par) => Prog [Errno] ()
-test n (S par) = merge (innerRange <$> [0..par]) |> count |> printLnTo Stdout
+test n (S par) = merge (innerRange <$> [0..par]) |> observeChunk consumed |> count |> printLnTo Stdout
   where
-    innerRange : Nat -> Stream f es (Nat,Nat)
-    innerRange x = (,x) <$> range n
+    innerRange : Nat -> Prog es (Nat,Nat)
+    innerRange x = observeChunk emitted $ (,x) <$> range n
 
 prog : List String -> Prog [Errno] ()
 prog ["server", n] =

@@ -116,6 +116,7 @@ parameters (chnl : Channel (List o))
   out (Error err) = putDeferred res (Left err)
   out _           = do
     0 <- update sema (\x => let y := pred x in (y,y)) | _ => pure ()
+    putStrLn "Channel closed"
     close chnl
 
   -- Starts running one of the input streams `s` in the background, returning
