@@ -24,5 +24,5 @@ parameters {0    es  : List Type}
   acceptOn d tpe addr =
     resource ((\x => Socket.R x) <$> socketnb d tpe) $ \(R sock) => do
       bind sock addr
-      listen sock 8
+      listen sock 128
       unfoldEvalChunk (Just . toList <$> acceptnb sock)

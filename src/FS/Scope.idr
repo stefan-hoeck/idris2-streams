@@ -1,5 +1,7 @@
 module FS.Scope
 
+import Control.Monad.Elin
+
 import Data.Linear.Deferred
 import Data.Linear.ELift1
 import Data.Linear.Ref1
@@ -7,16 +9,45 @@ import Data.Linear.Unique
 import Data.Maybe
 import Data.SortedMap
 
+import IO.Async
+
 %default total
 
+--------------------------------------------------------------------------------
+-- Interrupt
+--------------------------------------------------------------------------------
+
+||| An interruption handler.
+|||
+||| This is used for cross-stream interruption when running streams in
+||| parallel. For instance, when nondeterministically merging two streams
+||| A and B (see `FS.Concurrent.merge`), A and B will be run in parallel
+||| each on its own fiber. Both should be interrupted if downstream terminates,
+||| for instance because the number of emitted values have been limited via
+||| a call to `take`.
+|||
+||| Implementation detail: When running a stream, we check on each iteration
+||| whether the current scope has been interrupted or not. In addition, in
+||| case of wrapped effectful computations - which might be potentially long
+||| running (think of a timer or waiting for a connection or a mouse click) -
+||| the wrapped effect is raced against the stream being interrupted.
+public export
+data Interrupt : (f : List Type -> Type -> Type) -> Type where
+  None : Interrupt f
+  I    : (def : Deferred World a) -> Interrupt (Async e)
+
+--------------------------------------------------------------------------------
+-- Scopes
+--------------------------------------------------------------------------------
+
+||| IDs for comparing and ordering scopes. This is for internal
+||| use only. In particular, looking at the internal representation
+||| of a `ScopeID` via `Show` is *not* referentially transparent and
+||| should be used for debugging purposes only.
 export
 record ScopeID where
   constructor SID
   val : Nat
-
-export %inline
-RootID : ScopeID
-RootID = SID 0
 
 export %inline
 Eq ScopeID where
@@ -50,10 +81,13 @@ Show ScopeID where
 ||| Just like `Pull`s and `Stream`s, a `Scope` is parameterized by its
 ||| effect type.
 public export
-record Scope (s : Type) (f : List Type -> Type -> Type) where
+record Scope (f : List Type -> Type -> Type) where
   constructor S
   ||| this scope's unique identifier
   id        : ScopeID
+
+  ||| ID of this scope's root scope
+  root      : ScopeID
 
   ||| parent scopes `([parent, grand-parent, ... , root])`
   ancestors : List ScopeID
@@ -64,99 +98,141 @@ record Scope (s : Type) (f : List Type -> Type -> Type) where
   ||| list of child scopes
   children  : List ScopeID
 
-||| The overall state of scopes.
-public export
-record ScopeST (s : Type) (f : List Type -> Type -> Type) where
-  constructor SS
-  index         : Nat
-  scopes        : SortedMap ScopeID (Scope s f)
+  ||| Handler to check for stream interruption
+  interrupt : Interrupt f
 
-||| Returns the scope at the given scope ID.
+||| State of scopes of a running stream.
+public export
+0 ScopeST : (f : List Type -> Type -> Type) -> Type
+ScopeST f = SortedMap ScopeID (Scope f)
+
+--------------------------------------------------------------------------------
+-- Compilation Targets
+--------------------------------------------------------------------------------
+
+||| Target effect of stream compilation.
+|||
+||| Effect type `f` (of type `List Type -> Type -> Type`) can be used to
+||| run (= evaluate) streams in state thread `s`.
+||| Currently, this is either `Elin s` for running synchronous streams in state
+||| effect `s`, or `Async e` for running streams concurrently.
+|||
+||| If `s` is universally quantified, `Elin s` streams can be converted to pure
+||| functions making use of local mutable state, resource management, and error
+||| handling. If `s` equals `World`, `Elin World` can be used as a regular
+||| (synchronous) monad with error handling.
+public export
+interface ELift1 s f => Target s f | f where
+
+  ||| Initial scope reference for running a stream.
+  scopes : f [] (Ref s (ScopeST f))
+
+  ||| Combines two interruption handlers
+  combineInterrupts : (x,y : Interrupt f) -> f [] (Interrupt f, List (f [] ()))
+
+  ||| Returns `True` if the stream has been interrupted.
+  isInterrupted : Interrupt f -> f [] Bool
+
+  ||| Races an effectful computation against stream interruption
+  raceInterrupt : Interrupt f -> f es a -> f [] (Outcome es a)
+
 export %inline
-scopeAt : ScopeID -> ScopeST s f -> Maybe (Scope s f)
-scopeAt n = lookup n . scopes
+Target s (Elin s) where
+  scopes = newref empty
+  combineInterrupts None None = pure (None, [])
+  isInterrupted _ = pure False
+  raceInterrupt _ = map toOutcome . attempt
+
+%noinline
+asyncScopes : IORef (ScopeST $ Async e)
+asyncScopes = unsafePerformIO $ newref empty
+
+export
+Target World (Async e) where
+  scopes = pure asyncScopes
+
+  combineInterrupts None   x      = pure (x, [])
+  combineInterrupts x      None   = pure (x, [])
+  combineInterrupts (I d1) (I d2) = do
+    d3 <- deferredOf ()
+    f1 <- start {es = []} (await d1 >>= \_ => putDeferred d3 ())
+    f2 <- start {es = []} (await d2 >>= \_ => putDeferred d3 ())
+    pure (I d3, [cancel f1 >> cancel f2])
+
+  isInterrupted None  = pure False
+  isInterrupted (I d) = completed d
+
+  raceInterrupt None  act = toOutcome <$> attempt act
+  raceInterrupt (I d) act =
+    racePair {fs = []} act (await d) >>= \case
+      Left  (o,x) => cancel x $> o
+      Right (x,_) => cancel x $> Canceled
+
+--------------------------------------------------------------------------------
+-- Handling Scopes
+--------------------------------------------------------------------------------
 
 ||| There is always a `root` scope, which is the parent of
 ||| of all scopes.
 export %inline
-getRoot : ScopeST s f -> Scope s f
-getRoot ss = fromMaybe (S RootID [] [] []) (scopeAt RootID ss)
-
-||| Deletes the scope at the given scope ID.
-|||
-||| When the scope in question is the root scope (ID 0),
-||| only field `rootChildren` is reset to the empty list.
-export %inline
-deleteAt : ScopeID -> ScopeST s f -> ScopeST s f
-deleteAt n = {scopes $= delete n}
+getRoot : ScopeID -> ScopeST f -> Scope f
+getRoot id = fromMaybe (S id id [] [] [] None) . lookup id
 
 ||| Inserts a new scope. In case of the root scope, field
 ||| `rootChildren` is adjusted.
 export %inline
-insertScope : Scope s f -> ScopeST s f -> ScopeST s f
-insertScope s = {scopes $= insert s.id s}
+insertScope : Scope f -> ScopeST f -> ScopeST f
+insertScope s = insert s.id s
 
 ||| Finds the closest ancestor scope that is still open.
 |||
 ||| Note: The `root` scope cannot be fully closed, so this will always
 |||       return a sope.
 export
-openAncestor : ScopeST s f -> Scope s f -> Scope s f
-openAncestor ss = go . ancestors
+openAncestor : ScopeST f -> Scope f -> Scope f
+openAncestor ss s = go s.ancestors
   where
-    go : List ScopeID -> Scope s f
-    go []        = getRoot ss
-    go (x :: xs) = fromMaybe (go xs) (scopeAt x ss)
+    go : List ScopeID -> Scope f
+    go []        = getRoot s.root ss
+    go (x :: xs) = fromMaybe (go xs) (lookup x ss)
 
 ||| Returns the given scope if it is still open or its closest ancestor.
 |||
 ||| Note: The `root` scope cannot be fully closed, so this will always
 |||       return a sope.
 export
-openSelfOrAncestor : ScopeST s f -> Scope s f -> Scope s f
+openSelfOrAncestor : ScopeST f -> Scope f -> Scope f
 openSelfOrAncestor ss sc =
-  fromMaybe (openAncestor ss sc) (scopeAt sc.id ss)
-
--- utility alias
-0 FScope : (s : Type) -> (f : List Type -> Type -> Type) -> Type -> Type
-FScope s f a = ScopeST s f -> (ScopeST s f, a)
-
--- creates a new child scope with the given cleanup hook
--- for the given parent scope.
-scope : List (f [] ()) -> Scope s f -> FScope s f (Scope s f)
-scope cleanup par ss =
-  let ancs := par.id :: par.ancestors
-      sc   := S (SID ss.index) ancs cleanup []
-      par2 := {children $= (sc.id ::)} par
-      ss2  := insertScope par2 $ insertScope sc ss
-   in ({index $= S} ss2, sc)
-
-||| Initial state of scopes.
-export
-empty : ScopeST s f
-empty = SS 1 empty
+  fromMaybe (openAncestor ss sc) (lookup sc.id ss)
 
 parameters {0    f   : List Type -> Type -> Type}
-           {auto eff : ELift1 s f}
-           (ref      : Ref s (ScopeST s f))
+           {auto tgt : Target s f}
+           (ref      : Ref s (ScopeST f))
 
   ||| Returns the current state of the root scope
   export %inline
-  root : f es (Scope s f)
-  root = getRoot <$> readref ref
+  root : f [] (Scope f)
+  root = do
+    rid <- (SID . unsafeVal) <$> token
+    let r := S rid rid [] [] [] None
+    mod ref (insertScope r)
+    pure r
 
   ||| Opens and returns a new child scope for the given parent
   ||| scope.
   |||
-  ||| The optional `Bool` effect is used for checking for interruption.
-  |||
   ||| If the parent scope has already been closed, its closest
   ||| open ancestor will be used as the new scope's parent instead.
   export
-  openScope : Scope s f -> f es (Scope s f)
-  openScope par = do
+  openScope : Interrupt f -> Scope f -> f [] (Scope f)
+  openScope int par = do
+    sid          <- (SID . unsafeVal) <$> token
+    (sint, cncl) <- combineInterrupts par.interrupt int
     update ref $ \ss =>
-      scope [] (openSelfOrAncestor ss par) ss
+      let ancs := par.id :: par.ancestors
+          sc   := S sid par.root ancs cncl [] sint
+          par2 := {children $= (sc.id ::)} par
+       in (insertScope par2 $ insertScope sc ss, sc)
 
   ||| Closes the scope of the given ID plus all its child scopes,
   ||| releasing all allocated resources in reverse order of allocation
@@ -170,21 +246,30 @@ parameters {0    f   : List Type -> Type -> Type}
 
   close id = do
     act <- update ref $ \ss =>
-      case scopeAt id ss of
+      case lookup id ss of
         Nothing => (ss, pure ())
-        Just sc => (deleteAt id ss, closeAll sc.children sc.cleanup)
+        Just sc => (delete id ss, closeAll sc.children sc.cleanup)
     act
 
   ||| Lookup the scope with the given ID.
   export %inline
-  findScope : ScopeID -> f es (Maybe $ Scope s f)
-  findScope id = lookup id . scopes <$> readref ref
+  findScope : ScopeID -> f [] (Maybe $ Scope f)
+  findScope id = lookup id <$> readref ref
 
   ||| Adds a new cleanup hook to the given scope or its closest
   ||| open parent scope.
   export %inline
-  addHook : Scope s f -> f [] () -> f es (Scope s f)
+  addHook : Scope f -> f [] () -> f [] (Scope f)
   addHook sc hook =
     Ref1.update ref $ \ss =>
      let res := {cleanup $= (hook ::)} (openSelfOrAncestor ss sc)
       in (insertScope res ss, res)
+
+||| Creates a new root scope and returns it together with the set of
+||| scopes for the given effect type.
+export %inline
+newScope : Target s f => f [] (Scope f, Ref s (ScopeST f))
+newScope = do
+  ref <- scopes
+  sc  <- root ref
+  pure (sc, ref)

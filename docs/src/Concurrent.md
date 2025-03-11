@@ -8,11 +8,15 @@ import Data.FilePath
 import Data.String
 import Data.Vect
 
-import IO.Async.Loop.Posix
-import FS.Stream as S
+import FS
 import FS.Posix
+import FS.Posix.Internal
 import FS.Socket
 import FS.System
+import IO.Async.Loop.Epoll
+import IO.Async.Loop.Posix
+
+import System
 
 %default total
 
@@ -22,7 +26,7 @@ Prog = AsyncStream Poll
 covering
 runProg : Prog [Errno] () -> IO ()
 runProg prog =
-  simpleApp $ run (handle [eval . stderrLn . interpolate] prog)
+  epollApp $ run (handle [eval . stderrLn . interpolate] prog)
 ```
 
 ```idris
@@ -71,28 +75,104 @@ idrisLines =
   |> count
   |> printLnTo Stdout
 
+handler : HSum [Errno] -> AsyncStream e [Errno] (Either Errno a)
+handler (Here x) = pure (Left x)
+
+logRes : Either Errno ByteString -> Async Poll [Errno] ()
+logRes (Left x)  = stderrLn "Error: \{x}"
+logRes (Right x) = fwritenb Stdout (x <+> "\n")
+
 isStop : ByteString -> Bool
 isStop bs = trim bs == ":q"
 
-echo : Prog [Errno] ()
-echo = do
-  srv <- acceptOn AF_INET SOCK_STREAM (IP4 [127,0,0,1] 5555)
-  stdoutLn ("Got a connection (file descriptor: \{show $ fileDesc srv})")
-  handleErrors (\case Here x => stderrLn "\{x}") (serve srv)
+addr : Bits16 -> IP4Addr
+addr = IP4 [127,0,0,1]
 
-  where
-    serve : Socket AF_INET -> Prog [Errno] ()
-    serve sock =
-      resource (pure (Socket.R sock)) $ \_ =>
-           bytes sock 0xffff
-        |> observe (fwritenb Stdout)
+serve : Socket AF_INET -> Prog [Errno] ()
+serve cli =
+  finally (close' cli) $
+       bytes cli 0xff
+    |> lines
+    |> takeWhile (not . isStop)
+    |> linesTo cli
+
+echo : Bits16 -> (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] ()
+echo port n = parJoin n (serve <$> acceptOn AF_INET SOCK_STREAM (addr port))
+
+connectTo :
+     (d : Domain)
+  -> SockType
+  -> Addr d
+  -> Async Poll [Errno] (Socket d)
+connectTo d t addr = do
+  sock <- socketnb d t
+  connectnb sock addr
+  pure sock
+
+cli : Bits16 -> Prog [Errno] (Either Errno ByteString)
+cli port =
+  handleErrors handler $
+    bracket
+      (connectTo AF_INET SOCK_STREAM $ addr port)
+      (\cl => close' cl) $ \cl =>
+           (eval $ fwritenb cl "hello from \{show $ fileDesc cl}\n:q\n")
+        |> (>> bytes cl 0xff)
         |> lines
-        |> takeWhile (not . isStop)
-        |> linesTo sock
+        |> map Right
+
+echoCli : Bits16 -> (n, tot : Nat) -> (0 p : IsSucc n) => Prog [Errno] ()
+echoCli port n tot = parJoin n (replicate tot $ cli port) |> foreach logRes
+
+nats : Stream f es Nat
+nats = iterate 0 S
+
+range : Nat -> Stream f es Nat
+range n = take n nats
+
+emitted : List (Nat,Nat) -> Async Poll es ()
+emitted (h::t) = putStrLn "emitting \{show h}"
+emitted _      = putStrLn "empty chunk"
+
+countChunks : Stream f es a -> Stream f es Nat
+countChunks = foldChunks 0 (const . S)
+
+test : (n, par : Nat) -> (0 p : IsSucc par) => Prog [Errno] ()
+test n (S par) = merge (innerRange <$> [0..par]) |> countChunks |> printLnTo Stdout
+  where
+    innerRange : Nat -> Prog es (Nat,Nat)
+    innerRange x = (,x) <$> range n
+
+testPar : (n, streams, par : Nat) -> (0 p : IsSucc par) => Prog [Errno] ()
+testPar n streams par = parJoin par (innerRange <$> range streams) |> countChunks |> printLnTo Stdout
+  where
+    innerRange : Nat -> Prog es (Nat,Nat)
+    innerRange x = (,x) <$> range n
+
+prog : List String -> Prog [Errno] ()
+prog ["server", port, n] =
+  case cast {to = Nat} n of
+    S k => echo (cast port) (S k)
+    0   => echo (cast port) 128
+prog ["client", port, par, tot] =
+  case cast {to = Nat} par of
+    S k => echoCli (cast port) (S k) (cast tot)
+    0   => echoCli (cast port) 128 (cast tot)
+prog ["test", n, par] =
+  case cast {to = Nat} par of
+    S k => test (cast n) (S k)
+    0   => test (cast n) 128
+prog ["testpar", n, streams, par] =
+  case cast {to = Nat} par of
+    S k => testPar (cast n) (cast streams) (S k)
+    0   => testPar (cast n) (cast streams) 128
+prog _ = test 10 1
 
 covering
 main : IO ()
-main = runProg echo
+main = do
+  _ :: t <- getArgs | [] => runProg (prog [])
+  runProg (prog t)
+
 ```
 
 <!-- vi: filetype=idris2:syntax=markdown
