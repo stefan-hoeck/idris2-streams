@@ -26,7 +26,7 @@ Prog = AsyncStream Poll
 covering
 runProg : Prog [Errno] () -> IO ()
 runProg prog =
-  simpleApp $ run (handle [eval . stderrLn . interpolate] prog)
+  epollApp $ run (handle [eval . stderrLn . interpolate] prog)
 ```
 
 ```idris
@@ -90,11 +90,11 @@ serve cli = do
   handleErrors handler $
     bracket
       (pure cli)
-      (\_ => sleep 100.ms >> close' cli) $ \_ =>
+      (\_ => close' cli) $ \_ =>
            bytes cli 0xffff
         |> lines
         |> takeWhile (not . isStop)
-        |> observeChunk (\b => sleep 1.s >> ignore (writeLines cli b))
+        |> observeChunk (\b => ignore (writeLines cli b))
         |> map Right
 
 connectTo :
@@ -107,27 +107,27 @@ connectTo d t addr = do
   connectnb sock addr
   pure sock
 
-addr : IP4Addr
-addr = IP4 [127,0,0,1] 5555
+addr : Bits16 -> IP4Addr
+addr = IP4 [127,0,0,1]
 
-cli : Prog [Errno] (Either Errno ByteString)
-cli =
+cli : Bits16 -> Prog [Errno] (Either Errno ByteString)
+cli port =
   handleErrors handler $
     bracket
-      (connectTo AF_INET SOCK_STREAM addr)
-      (\cl => sleep 100.ms >> close' cl) $ \cl =>
-           (eval $ sleep 1.s >> fwritenb cl "hello from \{show $ fileDesc cl}\n:q\n")
+      (connectTo AF_INET SOCK_STREAM $ addr port)
+      (\cl => close' cl) $ \cl =>
+           (eval $ fwritenb cl "hello from \{show $ fileDesc cl}\n:q\n")
         |> (>> bytes cl 0xffff)
         |> lines
         |> map Right
 
-echo : (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] ()
-echo n =
-     parJoin n (serve <$> acceptOn AF_INET SOCK_STREAM addr)
+echo : Bits16 -> (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] ()
+echo port n =
+     parJoin n (serve <$> acceptOn AF_INET SOCK_STREAM (addr port))
   |> foreach logRes
 
-echoCli : (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] ()
-echoCli n = parJoin n (replicate n cli) |> foreach logRes
+echoCli : Bits16 -> (n, tot : Nat) -> (0 p : IsSucc n) => Prog [Errno] ()
+echoCli port n tot = parJoin n (replicate tot $ cli port) |> foreach logRes
 
 nats : Stream f es Nat
 nats = iterate 0 S
@@ -139,29 +139,38 @@ emitted : List (Nat,Nat) -> Async Poll es ()
 emitted (h::t) = putStrLn "emitting \{show h}"
 emitted _      = putStrLn "empty chunk"
 
-consumed : List (Nat,Nat) -> Async Poll es ()
-consumed (h::t) = putStrLn "consumed \{show h}"
-consumed _      = putStrLn "empty chunk"
+countChunks : Stream f es a -> Stream f es Nat
+countChunks = foldChunks 0 (const . S)
 
 test : (n, par : Nat) -> (0 p : IsSucc par) => Prog [Errno] ()
-test n (S par) = merge (innerRange <$> [0..par]) |> observeChunk consumed |> count |> printLnTo Stdout
+test n (S par) = merge (innerRange <$> [0..par]) |> countChunks |> printLnTo Stdout
   where
     innerRange : Nat -> Prog es (Nat,Nat)
-    innerRange x = observeChunk emitted $ (,x) <$> range n
+    innerRange x = (,x) <$> range n
+
+testPar : (n, streams, par : Nat) -> (0 p : IsSucc par) => Prog [Errno] ()
+testPar n streams par = parJoin par (innerRange <$> range streams) |> countChunks |> printLnTo Stdout
+  where
+    innerRange : Nat -> Prog es (Nat,Nat)
+    innerRange x = (,x) <$> range n
 
 prog : List String -> Prog [Errno] ()
-prog ["server", n] =
+prog ["server", port, n] =
   case cast {to = Nat} n of
-    S k => echo (S k)
-    0   => echo 128
-prog ["client", n] =
-  case cast {to = Nat} n of
-    S k => echoCli (S k)
-    0   => echoCli 128
+    S k => echo (cast port) (S k)
+    0   => echo (cast port) 128
+prog ["client", port, par, tot] =
+  case cast {to = Nat} par of
+    S k => echoCli (cast port) (S k) (cast tot)
+    0   => echoCli (cast port) 128 (cast tot)
 prog ["test", n, par] =
   case cast {to = Nat} par of
     S k => test (cast n) (S k)
     0   => test (cast n) 128
+prog ["testpar", n, streams, par] =
+  case cast {to = Nat} par of
+    S k => testPar (cast n) (cast streams) (S k)
+    0   => testPar (cast n) (cast streams) 128
 prog _ = test 10 1
 
 covering

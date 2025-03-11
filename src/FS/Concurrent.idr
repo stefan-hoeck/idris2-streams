@@ -216,12 +216,11 @@ parameters (done      : Deferred World (Result es ()))
   inner : AsyncStream e es o -> Async e es ()
   inner s =
     uncancelable $ \poll => do
-      -- poll (acquire available) -- wait for a fiber to become available
+      poll (acquire available) -- wait for a fiber to become available
       modify running S         -- increase the number of running fibers
       poll $ ignore $ parrunCase sc
         done
-        (\o => putErr done o >> decRunning)
-        -- (\o => putErr done o >> decRunning >> release available)
+        (\o => putErr done o >> decRunning >> release available)
         (foreachChunk (ignore . send output) s)
 
   -- Runs the outer stream on its own fiber until it terminates gracefully
@@ -232,8 +231,7 @@ parameters (done      : Deferred World (Result es ()))
   outer ss =
     parrunCase sc
       done
-      (\o => putErr done o >> decRunning)
-      -- (\o => putErr done o >> decRunning >> until running (== 0))
+      (\o => putErr done o >> decRunning >> until running (== 0))
       (foreach (inner . scope) ss)
 
 ||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
