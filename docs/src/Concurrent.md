@@ -75,9 +75,6 @@ idrisLines =
   |> count
   |> printLnTo Stdout
 
-isStop : ByteString -> Bool
-isStop bs = trim bs == ":q"
-
 handler : HSum [Errno] -> AsyncStream e [Errno] (Either Errno a)
 handler (Here x) = pure (Left x)
 
@@ -85,17 +82,22 @@ logRes : Either Errno ByteString -> Async Poll [Errno] ()
 logRes (Left x)  = stderrLn "Error: \{x}"
 logRes (Right x) = fwritenb Stdout (x <+> "\n")
 
-serve : Socket AF_INET -> Prog [Errno] (Either Errno ByteString)
-serve cli = do
-  handleErrors handler $
-    bracket
-      (pure cli)
-      (\_ => close' cli) $ \_ =>
-           bytes cli 0xffff
-        |> lines
-        |> takeWhile (not . isStop)
-        |> observeChunk (\b => ignore (writeLines cli b))
-        |> map Right
+isStop : ByteString -> Bool
+isStop bs = trim bs == ":q"
+
+addr : Bits16 -> IP4Addr
+addr = IP4 [127,0,0,1]
+
+serve : Socket AF_INET -> Prog [Errno] ()
+serve cli =
+  finally (close' cli) $
+       bytes cli 0xff
+    |> lines
+    |> takeWhile (not . isStop)
+    |> linesTo cli
+
+echo : Bits16 -> (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] ()
+echo port n = parJoin n (serve <$> acceptOn AF_INET SOCK_STREAM (addr port))
 
 connectTo :
      (d : Domain)
@@ -107,9 +109,6 @@ connectTo d t addr = do
   connectnb sock addr
   pure sock
 
-addr : Bits16 -> IP4Addr
-addr = IP4 [127,0,0,1]
-
 cli : Bits16 -> Prog [Errno] (Either Errno ByteString)
 cli port =
   handleErrors handler $
@@ -117,14 +116,9 @@ cli port =
       (connectTo AF_INET SOCK_STREAM $ addr port)
       (\cl => close' cl) $ \cl =>
            (eval $ fwritenb cl "hello from \{show $ fileDesc cl}\n:q\n")
-        |> (>> bytes cl 0xffff)
+        |> (>> bytes cl 0xff)
         |> lines
         |> map Right
-
-echo : Bits16 -> (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] ()
-echo port n =
-     parJoin n (serve <$> acceptOn AF_INET SOCK_STREAM (addr port))
-  |> foreach logRes
 
 echoCli : Bits16 -> (n, tot : Nat) -> (0 p : IsSucc n) => Prog [Errno] ()
 echoCli port n tot = parJoin n (replicate tot $ cli port) |> foreach logRes
