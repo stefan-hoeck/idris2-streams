@@ -28,17 +28,37 @@ import public IO.Async
 
 ||| Convenience alias for `Pull . Async`
 public export
+0 AsyncPull_ : (Type -> Type) -> Type -> Type -> List Type -> Type -> Type
+AsyncPull_ c e = Pull_ c (Async e)
+
+||| Convenience alias for `Pull . Async`
+public export
 0 AsyncPull : Type -> Type -> List Type -> Type -> Type
 AsyncPull e = Pull (Async e)
+
+||| Convenience alias for `Pull1 . Async`
+public export
+0 AsyncPull1 : Type -> Type -> List Type -> Type -> Type
+AsyncPull1 e = Pull1 (Async e)
+
+||| Convenience alias for `Stream . Async`
+public export
+0 AsyncStream_ : (Type -> Type) -> Type -> List Type -> Type -> Type
+AsyncStream_ c e = Stream_ c (Async e)
 
 ||| Convenience alias for `Stream . Async`
 public export
 0 AsyncStream : Type -> List Type -> Type -> Type
 AsyncStream e = Stream (Async e)
 
+||| Convenience alias for `Stream . Async`
+public export
+0 AsyncStream1 : Type -> List Type -> Type -> Type
+AsyncStream1 e = Stream1 (Async e)
+
 ||| An empty stream that terminates after the given delay.
 export %inline
-sleep : TimerH e => Clock Duration -> AsyncStream e es o
+sleep : TimerH e => Clock Duration -> AsyncStream_ c e es o
 sleep = exec . sleep
 
 ||| Emits the given value after a delay of the given duration.
@@ -53,12 +73,12 @@ delayed dur v = sleep dur <+> pure v
 ||| Converts a bounded queue of chunks into an infinite stream
 ||| of values.
 export %inline
-dequeue : BQueue (List o) -> AsyncStream e es o
-dequeue = repeat . evals . dequeue
+dequeue : BQueue (c o) -> AsyncStream_ c e es o
+dequeue = repeat . evalChunk . dequeue
 
 ||| Converts a channel of chunks into an infinite stream of values.
 export %inline
-receive : Channel (List o) -> AsyncStream e es o
+receive : Channel (c o) -> AsyncStream_ c e es o
 receive = unfoldEvalChunk . receive
 
 --------------------------------------------------------------------------------
@@ -68,22 +88,22 @@ receive = unfoldEvalChunk . receive
 ||| Interrupts the given stream when the given asynchronous
 ||| computation completes.
 export %inline
-interruptOn : Deferred World a -> AsyncStream e es o -> AsyncStream e es o
+interruptOn : Deferred World a -> AsyncStream_ c e es o -> AsyncStream_ c e es o
 interruptOn check (S p) = S (interruptPull check p)
 
 ||| Runs the first stream until it terminates or the second
 ||| stream emits a `True`.
 export
 interruptWhen :
-     AsyncStream e es o
-  -> AsyncStream e [] Bool
-  -> AsyncStream e es o
-interruptWhen str stop = do
-  sc <- currentScope
-  force $ do
+     AsyncStream_ c e es o
+  -> AsyncStream1 e [] Bool
+  -> AsyncStream_ c e es o
+interruptWhen str stop = S $ do
+  sc <- scope
+  pull $ force $ do
     doneL <- deferredOf ()
     doneR <- deferredOf ()
-    let watcher := foreachChunk (\_ => putDeferred doneR ()) (any id stop)
+    let watcher := foreachChunk (\b => when b (putDeferred doneR ())) stop
     pure $ bracket
       (assert_total $ parrun sc doneL (pure ()) watcher)
       (\f => putDeferred doneL () >> wait f)
@@ -91,7 +111,11 @@ interruptWhen str stop = do
 
 ||| Runs the given stream until the given duration expires.
 export
-timeout : TimerH e => Clock Duration -> AsyncStream e es o -> AsyncStream e es o
+timeout :
+     {auto th : TimerH e}
+  -> Clock Duration
+  -> AsyncStream_ c e es o
+  -> AsyncStream_ c e es o
 timeout dur str = S $ do
   def <- deferredOf ()
   _   <- acquire (start {es = []} $ sleep dur >> putDeferred def ()) cancel
@@ -101,7 +125,8 @@ timeout dur str = S $ do
 -- Merging Streams
 --------------------------------------------------------------------------------
 
-parameters (chnl : Channel (List o))
+parameters {0 c  : Type -> Type}
+           (chnl : Channel (c o))
            (done : Deferred World ())
            (res  : Deferred World (Result es ()))
            (sema : IORef Nat)
@@ -124,12 +149,12 @@ parameters (chnl : Channel (List o))
   -- the output stream is exhausted and `done` is completed.
   -- The running input stream writes all chunks of output to the channel.
   covering
-  child : AsyncStream e es o -> Async e es (Fiber [] ())
+  child : AsyncStream_ c e es o -> Async e es (Fiber [] ())
   child s = foreachChunk (ignore . send chnl) s |> parrunCase sc done out
 
   -- starts running all input streams in parallel, and reads chunks of
   -- output from the bounded queue `que`.
-  merged : List (AsyncStream e es o) -> AsyncStream e es o
+  merged : List (AsyncStream_ c e es o) -> AsyncStream_ c e es o
   merged ss =
     assert_total $
       bracket
@@ -145,15 +170,16 @@ parameters (chnl : Channel (List o))
 ||| with an error, in which case the output stream will terminate with
 ||| the same error.
 export
-merge : List (AsyncStream e es o) -> AsyncStream e es o
+merge : List (AsyncStream_ c e es o) -> AsyncStream_ c e es o
 merge []  = neutral
-merge ss  = Prelude.do
-  sc <- currentScope
-  force $ Prelude.do
+merge [s] = s
+merge ss  = S $ Prelude.do
+  sc <- scope
+  pull $ force $ Prelude.do
     -- A bounded queue where the running streams will write their output
     -- to. There will be no buffering: evaluating the streams will block
     -- until then next chunk of ouptut has been requested by the consumer.
-    chnl <- channelOf (List o) 0
+    chnl <- channelOf (c o) 0
 
     -- Signals the exhaustion of the output stream, which will cause all
     -- input streams to be interrupted.
@@ -191,98 +217,98 @@ mergeHaltBoth s1 s2 =
 --------------------------------------------------------------------------------
 
 -- `parJoin` implementation
-parameters (done      : Deferred World (Result es ()))
-           (available : Semaphore)
-           (running   : SignalRef Nat)
-           (output    : Channel (List o))
-           (sc        : Scope (Async e))
-
-  -- Every time an inner or the outer stream terminates, the number
-  -- of running fibers is reduced by one. If this reaches zero, no
-  -- more streams (including the outer stream!) is running, so the
-  -- channel can be closed. The result stream will terminated as soon
-  -- as the closed channel is empty.
-  %inline
-  decRunning : Async e [] ()
-  decRunning =
-    updateAndGet running pred >>= \case
-      0 => close output
-      _ => pure ()
-
-  -- Runs an inner stream on its own fiber until it terminates gracefully
-  -- or fails with an error. In case of an error, the `done` flag is set
-  -- immediately to hold the error and stop all other running streams.
-  covering
-  inner : AsyncStream e es o -> Async e es ()
-  inner s =
-    uncancelable $ \poll => do
-      poll (acquire available) -- wait for a fiber to become available
-      modify running S         -- increase the number of running fibers
-      poll $ ignore $ parrunCase sc
-        done
-        (\o => putErr done o >> decRunning >> release available)
-        (foreachChunk (ignore . send output) s)
-
-  -- Runs the outer stream on its own fiber until it terminates gracefully
-  -- or fails with an error.
-  -- The stream is interrupted as soon as the `done` flag is set.
-  covering
-  outer : AsyncStream e es (AsyncStream e es o) -> Async e es (Fiber [] ())
-  outer ss =
-    parrunCase sc
-      done
-      (\o => putErr done o >> decRunning >> until running (== 0))
-      (foreach (inner . scope) ss)
-
-||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
-||| opening at most `maxOpen` streams at any point in time.
-|||
-||| The outer stream is evaluated and each resulting inner stream is run concurrently,
-||| up to `maxOpen` stream. Once this limit is reached, evaluation of the outer stream
-||| is paused until one or more inner streams finish evaluating.
-|||
-||| When the outer stream stops gracefully, all inner streams continue to run,
-||| resulting in a stream that will stop when all inner streams finish
-||| their evaluation.
-|||
-||| Finalizers on each inner stream are run at the end of the inner stream,
-||| concurrently with other stream computations.
-|||
-||| Finalizers on the outer stream are run after all inner streams have been pulled
-||| from the outer stream but not before all inner streams terminate
-||| -- hence finalizers on the outer stream will run
-||| AFTER the LAST finalizer on the very last inner stream.
-|||
-||| Finalizers on the returned stream are run after the outer stream has finished
-||| and all open inner streams have finished.
-export
-parJoin :
-     (maxOpen    : Nat)
-  -> {auto 0 prf : IsSucc maxOpen}
-  -> (outer      : AsyncStream e es (AsyncStream e es o))
-  -> AsyncStream e es o
-parJoin maxOpen out = do
-  sc <- currentScope
-  assert_total $ force $ do
-    -- signals exhaustion of the output stream (for instance, due
-    -- to a `take n`). It will interrupt evaluation of the
-    -- input stream and all child streams.
-    done      <- deferredOf {s = World} (Result es ())
-
-    -- concurrent slots available. child streams will wait on this
-    -- before being started.
-    available <- semaphore maxOpen
-
-    running   <- signal 1
-
-    -- the input channel used for the result stream. it will be
-    -- closed when the last child was exhausted.
-    output    <- channelOf (List o) 0
-
-    fbr       <- outer done available running output sc out
-    -- the resulting stream should cleanup resources when it is done.
-    -- it should also finalize `done`.
-    pure $
-      finally
-        (putDeferred done (Right ()) >> wait fbr)
-        (interruptOn done (receive output))
+-- parameters (done      : Deferred World (Result es ()))
+--            (available : Semaphore)
+--            (running   : SignalRef Nat)
+--            (output    : Channel (c o))
+--            (sc        : Scope (Async e))
+--
+--   -- Every time an inner or the outer stream terminates, the number
+--   -- of running fibers is reduced by one. If this reaches zero, no
+--   -- more streams (including the outer stream!) is running, so the
+--   -- channel can be closed. The result stream will terminated as soon
+--   -- as the closed channel is empty.
+--   %inline
+--   decRunning : Async e [] ()
+--   decRunning =
+--     updateAndGet running pred >>= \case
+--       0 => close output
+--       _ => pure ()
+--
+--   -- Runs an inner stream on its own fiber until it terminates gracefully
+--   -- or fails with an error. In case of an error, the `done` flag is set
+--   -- immediately to hold the error and stop all other running streams.
+--   covering
+--   inner : AsyncStream_ c e es o -> Async e es ()
+--   inner s =
+--     uncancelable $ \poll => do
+--       poll (acquire available) -- wait for a fiber to become available
+--       modify running S         -- increase the number of running fibers
+--       poll $ ignore $ parrunCase sc
+--         done
+--         (\o => putErr done o >> decRunning >> release available)
+--         (foreachChunk (ignore . send output) s)
+--
+--   -- Runs the outer stream on its own fiber until it terminates gracefully
+--   -- or fails with an error.
+--   -- The stream is interrupted as soon as the `done` flag is set.
+--   covering
+--   outer : AsyncStream e es (AsyncStream e es o) -> Async e es (Fiber [] ())
+--   outer ss =
+--     parrunCase sc
+--       done
+--       (\o => putErr done o >> decRunning >> until running (== 0))
+--       (foreach (inner . scope) ss)
+--
+-- ||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
+-- ||| opening at most `maxOpen` streams at any point in time.
+-- |||
+-- ||| The outer stream is evaluated and each resulting inner stream is run concurrently,
+-- ||| up to `maxOpen` stream. Once this limit is reached, evaluation of the outer stream
+-- ||| is paused until one or more inner streams finish evaluating.
+-- |||
+-- ||| When the outer stream stops gracefully, all inner streams continue to run,
+-- ||| resulting in a stream that will stop when all inner streams finish
+-- ||| their evaluation.
+-- |||
+-- ||| Finalizers on each inner stream are run at the end of the inner stream,
+-- ||| concurrently with other stream computations.
+-- |||
+-- ||| Finalizers on the outer stream are run after all inner streams have been pulled
+-- ||| from the outer stream but not before all inner streams terminate
+-- ||| -- hence finalizers on the outer stream will run
+-- ||| AFTER the LAST finalizer on the very last inner stream.
+-- |||
+-- ||| Finalizers on the returned stream are run after the outer stream has finished
+-- ||| and all open inner streams have finished.
+-- export
+-- parJoin :
+--      (maxOpen    : Nat)
+--   -> {auto 0 prf : IsSucc maxOpen}
+--   -> (outer      : AsyncStream e es (AsyncStream e es o))
+--   -> AsyncStream e es o
+-- parJoin maxOpen out = do
+--   sc <- currentScope
+--   assert_total $ force $ do
+--     -- signals exhaustion of the output stream (for instance, due
+--     -- to a `take n`). It will interrupt evaluation of the
+--     -- input stream and all child streams.
+--     done      <- deferredOf {s = World} (Result es ())
+--
+--     -- concurrent slots available. child streams will wait on this
+--     -- before being started.
+--     available <- semaphore maxOpen
+--
+--     running   <- signal 1
+--
+--     -- the input channel used for the result stream. it will be
+--     -- closed when the last child was exhausted.
+--     output    <- channelOf (List o) 0
+--
+--     fbr       <- outer done available running output sc out
+--     -- the resulting stream should cleanup resources when it is done.
+--     -- it should also finalize `done`.
+--     pure $
+--       finally
+--         (putDeferred done (Right ()) >> wait fbr)
+--         (interruptOn done (receive output))

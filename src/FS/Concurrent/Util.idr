@@ -24,8 +24,8 @@ putErr def _         = pure ()
 export
 interruptPull :
      Deferred World a
-  -> Pull (Async e) o es ()
-  -> Pull (Async e) o es ()
+  -> Pull_ c (Async e) o es ()
+  -> Pull_ c (Async e) o es ()
 interruptPull def p = OnIntr (OScope (I def) p) (pure ())
 
 ||| Concurrently runs the given stream until it either terminates or
@@ -39,7 +39,7 @@ parrunCase :
      (sc      : Scope (Async e))
   -> (check   : Deferred World a)
   -> (finally : Outcome fs () -> Async e [] ())
-  -> Stream (Async e) fs Void
+  -> EmptyStream (Async e) fs
   -> Async e es (Fiber [] ())
 parrunCase sc check finally (S p) =
   start $ ignore $ guaranteeCase (runIn sc $ interruptPull check p) $ \case
@@ -58,6 +58,6 @@ parrun :
      (sc      : Scope (Async e))
   -> (check   : Deferred World a)
   -> (finally : Async e [] ())
-  -> Stream (Async e) fs Void
+  -> EmptyStream (Async e) fs
   -> Async e es (Fiber [] ())
 parrun sc check = parrunCase sc check . const
