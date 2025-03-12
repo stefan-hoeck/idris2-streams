@@ -4,9 +4,20 @@ module FS.Bytes
 import public Data.ByteString
 
 import FS.Internal.Bytes
+import FS.Pull
 import FS.Stream
 
 %default total
+
+export
+breakAtByte :
+     (Bits8 -> Bool)
+  -> Pull f ByteString es o
+  -> Pull f q es (ByteString, Pull f ByteString es o)
+breakAtByte pred p =
+  assert_total $ uncons p >>= \case
+    Left x           => pure (ByteString.empty, pure x)
+    Right (bss, rem) => ?foo_1
 
 ||| Appends a newline character (`0x0a`) to every bytestring
 ||| emitted by the stream.
