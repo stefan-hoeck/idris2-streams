@@ -9,4 +9,5 @@ depends    = streams-posix
 executable = "streams-docs"
 modules    = README
            , Concurrent
+           , HTTP
 main       = README

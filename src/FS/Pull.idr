@@ -22,9 +22,9 @@ import IO.Async
 -- Pull Type
 --------------------------------------------------------------------------------
 
-||| A `Pull f o es r` is a - possibly infinite - series of effectful
+||| A `Pull_ c f o es r` is a - possibly infinite - series of effectful
 ||| computations running in monad `f`, producing an arbitrary sequence
-||| of chunks of values of type `o` along the way, that eventually
+||| of chunks of values of type `c o` along the way, that eventually
 ||| terminates either with an error of type `HSum es` or with a result
 ||| of type `r`.
 |||
@@ -73,52 +73,53 @@ import IO.Async
 ||| to resort to `assert_total` when defining potentially infinite streams.
 ||| It's not pretty, but it gets the job done.
 public export
-data Pull :
-       (f : List Type -> Type -> Type)
-    -> (o : Type)
-    -> (es : List Type)
-    -> (r : Type)
+data Pull_ :
+       (c : Type -> Type)              -- chunk type
+    -> (f : List Type -> Type -> Type) -- effect type
+    -> (o : Type)                      -- output type
+    -> (es : List Type)                -- possible errors
+    -> (r : Type)                      -- result type
     -> Type where
 
   ||| Constructor for producing value of type `r`
-  Val    : (res : r) -> Pull f o es r
+  Val    : (res : r) -> Pull_ c f o es r
 
   ||| Constructor for failing with an exception
-  Err    : HSum es -> Pull f o es r
+  Err    : HSum es -> Pull_ c f o es r
 
   ||| Constructor for producing a chunk of output values
-  Output : (val : List o) -> Pull f o es ()
+  Output : (val : c o) -> Pull_ c f o es ()
 
-  ||| Wraps an arbitrary effectful computation in a `Pull`
-  Eval   : (act : f es r) -> Pull f o es r
+  ||| Wraps an arbitrary effectful computation in a `Pull_ c`
+  Eval   : (act : f es r) -> Pull_ c f o es r
 
-  ||| Unwraps the given child `Pull` until it either produces
+  ||| Unwraps the given child `Pull_ c` until it either produces
   ||| a result or a chunk of output.
-  Uncons : Pull f o es r -> Pull f q es (Either r (List o, Pull f o es r))
+  Uncons : Pull_ c f o es r -> Pull_ d f q es (Either r (c o, Pull_ c f o es r))
 
-  ||| Attempts to evaluate the underlying `Pull`, returning any error
+  ||| Attempts to evaluate the underlying `Pull_ c`, returning any error
   ||| wrapped in a `Left` and a successful result in a `Right`. This is
   ||| the primitive used for error handling.
-  Att    : Pull f o es r -> Pull f o fs (Result es r)
+  Att    : Pull_ c f o es r -> Pull_ c f o fs (Result es r)
 
-  ||| Sequencing of `Pull`s via monadic bind `(>>=)`.
-  Bind   : Pull f o es r -> (r -> Pull f o es t) -> Pull f o es t
+  ||| Sequencing of `Pull_`s via monadic bind `(>>=)`.
+  Bind   : Pull_ c f o es r -> (r -> Pull_ c f o es t) -> Pull_ c f o es t
 
-  ||| Runs the given `Pull` in a new child scope. The optional second argument
+  ||| Runs the given `Pull_` in a new child scope. The optional second argument
   ||| is used to check, if the scope has been interrupted.
-  OScope : Interrupt f -> Pull f o es r -> Pull f o es r
+  OScope : Interrupt f -> Pull_ c f o es r -> Pull_ c f o es r
 
   ||| Safe resource management: Once the given resource has been acquired,
   ||| it is released via the given cleanup hook once the current scope ends.
-  Acquire : f es r -> (r -> f [] ()) -> Pull f o es r
+  Acquire : f es r -> (r -> f [] ()) -> Pull_ c f o es r
 
-  ||| Internal: Evaluates the given `Pull` in the given inner scope as
+  ||| Internal: Evaluates the given `Pull_ c` in the given inner scope as
   ||| long as it produces chunks of output. Switches back to the outer scope
-  ||| once the `Pull` is exhausted.
-  WScope : Pull f o es r -> (inner, outer : ScopeID) -> Pull f o es r
+  ||| once the `Pull_ c` is exhausted.
+  WScope : Pull_ c f o es r -> (inner, outer : ScopeID) -> Pull_ c f o es r
 
   ||| Internal: A pull for returning the current scope
-  GScope : Pull f o es (Scope f)
+  GScope : Pull_ c f o es (Scope f)
 
   ||| Internal: Forces the given pull to be evaluated in the given scope.
   |||
@@ -126,17 +127,32 @@ data Pull :
   ||| or merging streams): Both pulls must be run in the outer scope to prevent
   ||| the resources of the second pull to be release early when the first once
   ||| is exhausted. See `stepLeg` and `StepLeg`.
-  IScope : Scope f -> Pull f o es r -> Pull f o es r
+  IScope : Scope f -> Pull_ c f o es r -> Pull_ c f o es r
 
   ||| Continues with the second pull in case the first is interrupted.
-  OnIntr : Pull f o es r -> Lazy (Pull f o es r) -> Pull f o es r
+  OnIntr : Pull_ c f o es r -> Lazy (Pull_ c f o es r) -> Pull_ c f o es r
+
+||| Alias for a `Pull_` operating on lists of values.
+public export
+0 Pull : (List Type -> Type -> Type) -> Type -> List Type -> Type -> Type
+Pull = Pull_ List
+
+||| Alias for a `Pull_` that cannot produce any output.
+public export
+0 EmptyPull : (List Type -> Type -> Type) -> List Type -> Type -> Type
+EmptyPull f es r = Pull_ (const Void) f () es r
+
+||| Alias for a `Pull_` that emits single values.
+public export
+0 Pull1 : (List Type -> Type -> Type) -> Type -> List Type -> Type -> Type
+Pull1 = Pull_ Prelude.id
 
 ||| A (partially evaluated) `Pull` plus the scope it should be
 ||| evaluated in.
 public export
-record StepLeg f es o where
+record StepLeg c f es o where
   constructor SL
-  pull  : Pull f o es ()
+  pull  : Pull_ c f o es ()
   scope : Scope f
 
 --------------------------------------------------------------------------------
@@ -147,7 +163,7 @@ record StepLeg f es o where
 ||| follow from it implementing `MErr`, which adds capabilities for error
 ||| handling.
 export %inline
-MErr (Pull f o) where
+MErr (Pull_ c f o) where
   fail        = Err
   succeed     = Val
   bind        = Bind
@@ -158,12 +174,17 @@ MErr (Pull f o) where
 ||| In case the effect type of a pull has support for mutable state in
 ||| state thread `s`, so does the `Pull` itself.
 export %inline
-ELift1 s f => ELift1 s (Pull f o) where
+ELift1 s f => ELift1 s (Pull_ c f o) where
   elift1 = Eval . elift1
 
 --------------------------------------------------------------------------------
 -- Creating Pulls
 --------------------------------------------------------------------------------
+
+||| Emits a single value of output
+export %inline
+outputChunk : c o -> Pull_ c f o es ()
+outputChunk = Output
 
 ||| Emits a single value of output
 export %inline
@@ -186,11 +207,11 @@ foldable = output . toList
 ||| This allows us to potentially emit a bunch of values right before
 ||| we are done.
 export
-unfoldChunk : (init : x) -> (x -> (List o, Either r x)) -> Pull f o es r
+unfoldChunk : (init : x) -> (x -> (c o, Either r x)) -> Pull_ c f o es r
 unfoldChunk init g =
   assert_total $ case g init of
-    (os, Left r)   => output os $> r
-    (os, Right s2) => output os >> unfoldChunk s2 g
+    (os, Left r)   => outputChunk os $> r
+    (os, Right s2) => outputChunk os >> unfoldChunk s2 g
 
 ||| Emits values until the given generator function returns a `Left`
 export %inline
@@ -199,20 +220,20 @@ unfold @{CS n} init g = unfoldChunk init (unfoldImpl [<] n g)
 
 ||| Like `unfoldMaybe` but emits values in chunks.
 export
-unfoldChunkMaybe : (init : x) -> (x -> (List o, Maybe x)) -> Pull f o es ()
+unfoldChunkMaybe : (init : x) -> (x -> (c o, Maybe x)) -> Pull_ c f o es ()
 unfoldChunkMaybe init g =
   let (os,ms) := g init
    in case ms of
-        Nothing => output os
-        Just s2 => assert_total $ output os >> unfoldChunkMaybe s2 g
+        Nothing => outputChunk os
+        Just s2 => assert_total $ outputChunk os >> unfoldChunkMaybe s2 g
 
 ||| Generates a stream from the given list of chunks. Empty chunks
 ||| will be silently dropped.
 export
-fromChunks : List (List o) -> Pull f o es ()
+fromChunks : Monoid (c o) => List (c o) -> Pull_ c f o es ()
 fromChunks vss =
   unfoldChunkMaybe vss $ \case
-    []   => ([], Nothing)
+    []   => (neutral, Nothing)
     h::t => (h, Just t)
 
 ||| Like `unfold` but does not produce an interesting result.
@@ -250,24 +271,24 @@ unfoldEvalST st act =
 ||| Like `unfoldEval` but produces values via an effectful computation
 ||| until the given function returns a `Just`.
 export
-unfoldEvalChunk : f es (List o, Maybe r) -> Pull f o es r
+unfoldEvalChunk : f es (c o, Maybe r) -> Pull_ c f o es r
 unfoldEvalChunk act =
   assert_total $ Eval act >>= \case
-    (vs, Just r)  => output vs $> r
-    (vs, Nothing) => output vs >> unfoldEvalChunk act
+    (vs, Just r)  => outputChunk vs $> r
+    (vs, Nothing) => outputChunk vs >> unfoldEvalChunk act
 
 ||| Like `unfoldEval` but produces values via an effectful computation
 ||| until the given function returns a `Nothing`.
 export
-unfoldEvalChunkMaybe : f es (Maybe $ List o) -> Pull f o es ()
+unfoldEvalChunkMaybe : f es (Maybe $ c o) -> Pull_ c f o es ()
 unfoldEvalChunkMaybe act =
   assert_total $ Eval act >>= \case
     Nothing => pure ()
-    Just vs => output vs >> unfoldEvalChunkMaybe act
+    Just vs => outputChunk vs >> unfoldEvalChunkMaybe act
 
 ||| Infinitely cycles through the given `Pull`
 export
-repeat : Pull f o es () -> Pull f o es ()
+repeat : Pull_ c f o es () -> Pull_ c f o es ()
 repeat v = assert_total $ v >> repeat v
 
 ||| Infinitely produces chunks of values of the given size
@@ -302,7 +323,7 @@ replicate @{CS n} m v =
 ||| This is an internal primitive that can be used to implement
 ||| new combinators and topologies.
 export %inline
-scope : Pull f o es (Scope f)
+scope : Pull_ c f o es (Scope f)
 scope = GScope
 
 ||| Forces the given `Pull` to be evaluated in the given scope.
@@ -310,24 +331,28 @@ scope = GScope
 ||| This is an internal primitive that can be used to implement
 ||| new combinators and topologies.
 export %inline
-inScope : Scope f -> Pull f o es r -> Pull f o es r
+inScope : Scope f -> Pull_ c f o es r -> Pull_ c f o es r
 inScope = IScope
 
 ||| Acquires a resource that will be released once the current
 ||| scope is cleaned up.
 export %inline
-acquire : (acq : f es r) -> (release : r -> f [] ()) -> Pull f o es r
+acquire : (acq : f es r) -> (release : r -> f [] ()) -> Pull_ c f o es r
 acquire = Acquire
 
 --------------------------------------------------------------------------------
 -- Combinators
 --------------------------------------------------------------------------------
 
+export %inline
+consChunk : c o -> Pull_ c f o es r -> Pull_ c f o es r
+consChunk vs p = Output vs >> p
+
 ||| Prepends a list of values to a `Pull`
 export %inline
 cons : List o -> Pull f o es r -> Pull f o es r
 cons [] p = p
-cons vs p = Output vs >> p
+cons vs p = consChunk vs p
 
 ||| Splits the first chunk of values from the head of a `Pull`, returning
 ||| either the final result or a list of values plus the remainder of the
@@ -335,7 +360,7 @@ cons vs p = Output vs >> p
 |||
 ||| Please note that the resulting pull with not produce any output.
 export %inline
-uncons : Pull f o es r -> Pull f q es (Either r (List o, Pull f o es r))
+uncons : Pull_ c f o es r -> Pull_ d f q es (Either r (c o, Pull_ c f o es r))
 uncons = Uncons
 
 ||| Splits the very value from the head of a `Pull`
@@ -355,7 +380,7 @@ uncons1 p =
 ||| when zipping or merging them. This will make sure that all resources
 ||| will be released in the correct order.
 export
-stepLeg : StepLeg f es o -> Pull f q es (Maybe (List o, StepLeg f es o))
+stepLeg : StepLeg c f es o -> Pull_ c f q es (Maybe (c o, StepLeg c f es o))
 stepLeg (SL p sc) =
   inScope sc $ do
     uncons p >>= \case
@@ -365,8 +390,8 @@ stepLeg (SL p sc) =
 ||| Utility for consing some values onto a pull and running it in
 ||| its desired scope.
 export
-endLeg : List o -> StepLeg f es o -> Pull f o es ()
-endLeg vs (SL p sc) = inScope sc (cons vs p)
+endLeg : c o -> StepLeg c f es o -> Pull_ c f o es ()
+endLeg vs (SL p sc) = inScope sc (consChunk vs p)
 
 ||| Like `uncons`, but returns a chunk of at most `n` elements
 export
@@ -445,11 +470,11 @@ last = go Nothing
 
 ||| Like `uncons` but does not consume the chunk
 export
-peek : Pull f o es () -> Pull f q es (Maybe (List o, Pull f o es ()))
+peek : Pull_ c f o es () -> Pull_ c f q es (Maybe (c o, Pull_ c f o es ()))
 peek p =
   uncons p >>= \case
     Left _       => pure Nothing
-    Right (vs,q) => pure $ Just (vs, cons vs q)
+    Right (vs,q) => pure $ Just (vs, consChunk vs q)
 
 ||| Like `uncons1` but does not consume the value
 export
@@ -581,37 +606,34 @@ find pred p =
       Nothing      => find pred q
 
 ||| Chunk-wise maps the output of a `Pull`
-export
-mapChunks : (List o -> List p) -> Pull f o es r -> Pull f p es r
-mapChunks f p =
+export %inline
+mapChunk : (c o -> d p) -> Pull_ c f o es r -> Pull_ d f p es r
+mapChunk f p =
   assert_total $ uncons p >>= \case
-    Left x      => pure x
-    Right (v,p) => cons (f v) $ mapChunks f p
+    Left x       => pure x
+    Right (vs,p) => consChunk (f vs) $ mapChunk f p
 
 ||| Chunk-wise effectful mapping of the output of a `Pull`
 export
-mapChunksEval :
-     (List o -> f es (List p))
-  -> Pull f o es r
-  -> Pull f p es r
-mapChunksEval f p =
+mapChunkEval : (c o -> f es (d p)) -> Pull_ c f o es r -> Pull_ d f p es r
+mapChunkEval f p =
   assert_total $ uncons p >>= \case
     Left x       => pure x
     Right (vs,p) => do
       ws <- Eval (f vs)
-      cons ws $ mapChunksEval f p
+      consChunk ws $ mapChunkEval f p
 
 ||| Consumes the produced chunks of output, draining the pull.
 export
-sinkChunks : (List o -> f es ()) -> Pull f o es r -> Pull f p es r
-sinkChunks f p =
+sinkChunk : (c o -> f es ()) -> Pull_ c f o es r -> Pull_ d f p es r
+sinkChunk f p =
   assert_total $ uncons p >>= \case
     Left x       => pure x
-    Right (vs,p) => Eval (f vs) >> sinkChunks f p
+    Right (vs,p) => Eval (f vs) >> sinkChunk f p
 
 ||| Consumes the produced output, draining the pull.
 |||
-||| See also `sinkChunks` for a potentially more efficient version.
+||| See also `sinkChunk` for a potentially more efficient version.
 export
 sink : (o -> f es ()) -> Pull f o es r -> Pull f p es r
 sink f p =
@@ -619,37 +641,45 @@ sink f p =
     Left x      => pure x
     Right (v,p) => Eval (f v) >> sink f p
 
+||| Consumes the produced chunks of output without draining the pull.
+export
+observeOutput : (c o -> f es ()) -> Pull_ c f o es r -> Pull_ c f o es r
+observeOutput f p =
+  assert_total $ uncons p >>= \case
+    Left x       => pure x
+    Right (vs,p) => Eval (f vs) >> outputChunk vs >> observeOutput f p
+
 ||| Maps the output of a `Pull`
 export %inline
 mapOutput : (o -> p) -> Pull f o es r -> Pull f p es r
-mapOutput = mapChunks . map
+mapOutput = mapChunk . map
 
 ||| Filters the output of a `Pull` emitting only the
 ||| values that fulfill the given predicate
 export %inline
 filter : (o -> Bool) -> Pull f o es r -> Pull f o es r
-filter = mapChunks . filter
+filter = mapChunk . filter
 
 ||| Folds all input chunk-wise using an initial value and
 ||| binary operator
 export
-foldChunks : p -> (p -> List o -> p) -> Pull f o es () -> Pull f q es p
-foldChunks v g s =
+foldChunk : p -> (p -> c o -> p) -> Pull_ c f o es () -> Pull_ d f q es p
+foldChunk v g s =
   assert_total $ uncons s >>= \case
     Left _        => pure v
-    Right (vs,s2) => foldChunks (g v vs) g s2
+    Right (vs,s2) => foldChunk (g v vs) g s2
 
 ||| Folds all input using an initial value and binary operator
 export %inline
-fold : p -> (p -> o -> p) -> Pull f o es () -> Pull f q es p
-fold v = foldChunks v . foldl
+fold : p -> (p -> o -> p) -> Pull f o es () -> Pull_ c f q es p
+fold v = foldChunk v . foldl
 
 ||| Folds all input using the supplied binary operator.
 |||
 ||| This returns `Nothing` in case the stream does not produce any
 ||| values.
 export %inline
-fold1 : (o -> o -> o) -> Pull f o es () -> Pull f q es (Maybe o)
+fold1 : (o -> o -> o) -> Pull f o es () -> Pull_ c f q es (Maybe o)
 fold1 g p =
   assert_total $ uncons p >>= \case
     Left _         => pure Nothing
@@ -659,7 +689,7 @@ fold1 g p =
 ||| Returns `True` if all emitted values of the given stream fulfill
 ||| the given predicate
 export
-all : (o -> Bool) -> Pull f o es () -> Pull f q es Bool
+all : (o -> Bool) -> Pull f o es () -> Pull_ c f q es Bool
 all pred p =
   assert_total $ uncons p >>= \case
     Left _ => pure True
@@ -670,7 +700,7 @@ all pred p =
 ||| Returns `True` if any of the emitted values of the given stream fulfills
 ||| the given predicate
 export
-any : (o -> Bool) -> Pull f o es () -> Pull f q es Bool
+any : (o -> Bool) -> Pull f o es () -> Pull_ c f q es Bool
 any pred p =
   assert_total $ uncons p >>= \case
     Left _ => pure False
@@ -682,36 +712,32 @@ any pred p =
 |||
 ||| Aborts as soon as the given accumulator function returns `Nothing`
 export
-scanChunksMaybe :
+scanChunkMaybe :
      x
-  -> (x -> Maybe (List o -> (List p,x)))
-  -> Pull f o es ()
-  -> Pull f p es x
-scanChunksMaybe s1 f p =
+  -> (x -> Maybe (c o -> (d p,x)))
+  -> Pull_ c f o es ()
+  -> Pull_ d f p es x
+scanChunkMaybe s1 f p =
   assert_total $ case f s1 of
     Nothing => pure s1
     Just g  => uncons p >>= \case
       Left r      => pure s1
-      Right (v,p) => let (w,s2) := g v in cons w $ scanChunksMaybe s2 f p
+      Right (v,p) => let (w,s2) := g v in consChunk w $ scanChunkMaybe s2 f p
 
-||| Like `scanChunksMaybe` but will transform the whole output.
+||| Like `scanChunkMaybe` but will transform the whole output.
 export
-scanChunks :
-     x
-  -> (x -> List o -> (List p,x))
-  -> Pull f o es ()
-  -> Pull f p es x
-scanChunks s1 f = scanChunksMaybe s1 (Just . f)
+scanChunk : x -> (x -> c o -> (d p,x)) -> Pull_ c f o es () -> Pull_ d f p es x
+scanChunk s1 f = scanChunkMaybe s1 (Just . f)
 
 export
-unconsBind : Pull f o es () -> (List o -> Pull f p es ()) -> Pull f p es ()
+unconsBind : Pull_ c f o es () -> (c o -> Pull_ d f p es ()) -> Pull_ d f p es ()
 unconsBind p g =
   assert_total $ uncons p >>= \case
     Left _       => pure ()
     Right (os,q) => g os >> unconsBind q g
 
 export
-bindOutput : (List o -> Pull f p es ()) -> Pull f o es () -> Pull f p es ()
+bindOutput : (c o -> Pull_ d f p es ()) -> Pull_ c f o es () -> Pull_ d f p es ()
 bindOutput f p =
   assert_total $ uncons p >>= \case
     Left _      => pure ()
@@ -723,6 +749,13 @@ bindOutput1 f p =
   assert_total $ uncons1 p >>= \case
     Left _      => pure ()
     Right (v,q) => f v >> bindOutput1 f q
+
+export
+attemptOutput1 : Pull1 f o es () -> Pull1 f (Result es o) fs ()
+attemptOutput1 p =
+  Att (mapChunk Right p) >>= \case
+    Left x  => outputChunk (Left x)
+    Right _ => pure ()
 
 export
 attemptOutput : Pull f o es () -> Pull f (Result es o) fs ()
@@ -740,16 +773,17 @@ attemptOutput p =
 ||| a remainder, which will be evaluated next.
 public export
 data StepRes :
-       (f  : List Type -> Type -> Type)
+       (c  : Type -> Type)
+    -> (f  : List Type -> Type -> Type)
     -> (o  : Type)
     -> (es : List Type)
     -> (r  : Type)
     -> Type where
   ||| Stream completed successfully with a result
-  Done : (ss : Scope f) -> (res : Outcome es r) -> StepRes f o es r
+  Done : (ss : Scope f) -> (res : Outcome es r) -> StepRes c f o es r
 
   ||| Stream produced some output
-  Out  : (ss : Scope f) -> (chunk : List o) -> Pull f o es r -> StepRes f o es r
+  Out  : (ss : Scope f) -> (chunk : c o) -> Pull_ c f o es r -> StepRes c f o es r
 
 parameters {0 f      : List Type -> Type -> Type}
            {auto tgt : Target s f}
@@ -764,7 +798,7 @@ parameters {0 f      : List Type -> Type -> Type}
   -- data constructors of `Pull`. The `Scope` argument is the resource
   -- scope we are currently working with.
   export covering
-  step : Pull f o es r -> Scope f -> f [] (StepRes f o es r)
+  step : Pull_ c f o es r -> Scope f -> f [] (StepRes c f o es r)
   step p sc = do
     False <- isInterrupted sc.interrupt | True => pure (Done sc Canceled)
     case p of
@@ -869,17 +903,17 @@ parameters {0 f      : List Type -> Type -> Type}
       IScope sc2 p => step p sc2
 
   covering
-  loop : Pull f Void es r -> Scope f -> f [] (Outcome es r)
+  loop : EmptyPull f es r -> Scope f -> f [] (Outcome es r)
   loop p sc =
     step p sc >>= \case
-      Done _ v       => pure v
-      Out  sc2 [] p2 => loop p2 sc2
+      Done _ v      => pure v
+      Out  sc2 _ p2 => loop p2 sc2
 
 parameters {auto mcn : MCancel f}
            {auto tgt : Target s f}
 
   export covering
-  runIn : Scope f -> Pull f Void es r -> f [] (Outcome es r)
+  runIn : Scope f -> EmptyPull f es r -> f [] (Outcome es r)
   runIn sc p = do
     ref <- scopes
     loop ref p sc
@@ -892,7 +926,7 @@ parameters {auto mcn : MCancel f}
   |||       `Async` and racing it with a cancelation thread (for instance,
   |||       by waiting for an operating system signal).
   export covering
-  run : Pull f Void es r -> f [] (Outcome es r)
+  run : EmptyPull f es r -> f [] (Outcome es r)
   run p =
     bracket newScope
       (\(sc,ref) => loop ref p sc)
@@ -901,5 +935,5 @@ parameters {auto mcn : MCancel f}
 ||| Convenience alias of `run` for running a `Pull` in the `Elin s`
 ||| monad, producing a pure result.
 export %inline covering
-pullElin : (forall s . Pull (Elin s) Void es r) -> Outcome es r
+pullElin : (forall s . EmptyPull (Elin s) es r) -> Outcome es r
 pullElin f = either absurd id $ runElin (run f)
