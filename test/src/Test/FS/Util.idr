@@ -3,7 +3,6 @@ module Test.FS.Util
 import public FS.Elin
 import public Hedgehog
 import Data.Linear.Ref1
-import FS.Internal.Chunk
 import FS.Pull
 
 %default total
@@ -45,7 +44,7 @@ chunkSizes : Gen ChunkSize
 chunkSizes = (\n => CS (S n)) <$> smallNats
 
 export %inline
-chunkedCS : ChunkSize -> List a -> List (List a)
+chunkedCS : ChunkSize -> List a -> List (Chunk a)
 chunkedCS (CS sz) = chunked sz
 
 --------------------------------------------------------------------------------
@@ -89,85 +88,85 @@ firstl vss =
 
 ||| Emits the first chunk of data in the given foldable (if any).
 export
-headOut : Foldable m => m (List o, Pull f o es ()) -> Pull f o es ()
+headOut : Foldable m => m (Chunk o, Pull f o es ()) -> Pull f o es ()
 headOut ps =
   case toList ps of
     []          => pure ()
     (vs,_) :: _ => output vs
-
-||| Returns the first pull in the given foldable (if any).
-export
-tailOut : Foldable m => m (q, Pull f o es ()) -> Pull f o es ()
-tailOut ps =
-  case toList ps of
-    []          => pure ()
-    (_,tl) :: _ => tl
-
-||| Emits the first value in the given foldable (if any).
-export
-headOut1 : Foldable m => m (o, Pull f o es ()) -> Pull f o es ()
-headOut1 ps =
-  case toList ps of
-    []         => pure ()
-    (v,_) :: _ => output1 v
-
-||| Returns the wrapped stream or the empty stream in case of a `Nothing`
-export
-orEmpty : Monoid r => Maybe (Pull f o e r) ->  Pull f o e r
-orEmpty = fromMaybe (pure neutral)
-
-||| Returns a stream that emits the wrapped values and remainder of
-||| the stream.
-export
-emitBoth : Maybe (List o,Pull f o es ()) -> Pull f o es ()
-emitBoth Nothing       = pure ()
-emitBoth (Just (v,vs)) = output v >> vs
-
-||| Returns a stream that emits the wrapped value and remainder of
-||| the stream.
-export
-emitBoth1 : Maybe (o,Pull f o es ()) -> Pull f o es ()
-emitBoth1 Nothing       = pure ()
-emitBoth1 (Just (v,vs)) = output1 v >> vs
-
-export
-evalFromList : ELift1 s f => List o -> Stream f es o
-evalFromList vss = eval (newref vss) >>= unfoldEval . next
-
-  where
-    next : Ref s (List o) -> f es (Maybe o)
-    next ref = do
-      h::t <- readref ref | [] => pure Nothing
-      writeref ref t
-      pure (Just h)
-
-export
-evalFromChunks : ELift1 s f => List (List o) -> Stream f es o
-evalFromChunks vss = eval (newref vss) >>= unfoldEvalChunk . next
-
-  where
-    next : Ref s (List $ List o) -> f es (Maybe $ List o)
-    next ref = do
-      h::t <- readref ref | [] => pure Nothing
-      writeref ref t
-      pure (Just h)
-
-export
-zipIx1 : ELift1 s f => Stream f es o -> Stream f es (Nat,o)
-zipIx1 str = eval (newref Z) >>= flip evalMap str . pair
-  where
-    pair : Ref s Nat -> o -> f es (Nat,o)
-    pair ref v = do
-      n <- readref ref
-      writeref ref (S n)
-      pure (n, v)
-
-export
-zipIx : ELift1 s f => Stream f es o -> Stream f es (Nat,o)
-zipIx str = eval (newref Z) >>= flip evalMapChunk str . traverse . pair
-  where
-    pair : Ref s Nat -> o -> f es (Nat,o)
-    pair ref v = do
-      n <- readref ref
-      writeref ref (S n)
-      pure (n, v)
+--
+-- ||| Returns the first pull in the given foldable (if any).
+-- export
+-- tailOut : Foldable m => m (q, Pull f o es ()) -> Pull f o es ()
+-- tailOut ps =
+--   case toList ps of
+--     []          => pure ()
+--     (_,tl) :: _ => tl
+--
+-- ||| Emits the first value in the given foldable (if any).
+-- export
+-- headOut1 : Foldable m => m (o, Pull f o es ()) -> Pull f o es ()
+-- headOut1 ps =
+--   case toList ps of
+--     []         => pure ()
+--     (v,_) :: _ => output1 v
+--
+-- ||| Returns the wrapped stream or the empty stream in case of a `Nothing`
+-- export
+-- orEmpty : Monoid r => Maybe (Pull f o e r) ->  Pull f o e r
+-- orEmpty = fromMaybe (pure neutral)
+--
+-- ||| Returns a stream that emits the wrapped values and remainder of
+-- ||| the stream.
+-- export
+-- emitBoth : Maybe (List o,Pull f o es ()) -> Pull f o es ()
+-- emitBoth Nothing       = pure ()
+-- emitBoth (Just (v,vs)) = output v >> vs
+--
+-- ||| Returns a stream that emits the wrapped value and remainder of
+-- ||| the stream.
+-- export
+-- emitBoth1 : Maybe (o,Pull f o es ()) -> Pull f o es ()
+-- emitBoth1 Nothing       = pure ()
+-- emitBoth1 (Just (v,vs)) = output1 v >> vs
+--
+-- export
+-- evalFromList : ELift1 s f => List o -> Stream f es o
+-- evalFromList vss = eval (newref vss) >>= unfoldEval . next
+--
+--   where
+--     next : Ref s (List o) -> f es (Maybe o)
+--     next ref = do
+--       h::t <- readref ref | [] => pure Nothing
+--       writeref ref t
+--       pure (Just h)
+--
+-- export
+-- evalFromChunks : ELift1 s f => List (List o) -> Stream f es o
+-- evalFromChunks vss = eval (newref vss) >>= unfoldEvalChunk . next
+--
+--   where
+--     next : Ref s (List $ List o) -> f es (Maybe $ List o)
+--     next ref = do
+--       h::t <- readref ref | [] => pure Nothing
+--       writeref ref t
+--       pure (Just h)
+--
+-- export
+-- zipIx1 : ELift1 s f => Stream f es o -> Stream f es (Nat,o)
+-- zipIx1 str = eval (newref Z) >>= flip evalMap str . pair
+--   where
+--     pair : Ref s Nat -> o -> f es (Nat,o)
+--     pair ref v = do
+--       n <- readref ref
+--       writeref ref (S n)
+--       pure (n, v)
+--
+-- export
+-- zipIx : ELift1 s f => Stream f es o -> Stream f es (Nat,o)
+-- zipIx str = eval (newref Z) >>= flip evalMapChunk str . traverse . pair
+--   where
+--     pair : Ref s Nat -> o -> f es (Nat,o)
+--     pair ref v = do
+--       n <- readref ref
+--       writeref ref (S n)
+--       pure (n, v)

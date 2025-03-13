@@ -228,25 +228,25 @@ find f (Lst vs) = go vs
     go []        = Nothing
     go (x :: xs) = if f x then Just (x, Lst xs) else go xs
 
---
--- chunkedGo :
---      SnocList (List a)
---   -> SnocList a
---   -> Nat
---   -> Nat
---   -> List a
---   -> List (List a)
--- chunkedGo sxs sx _  _     []     = sxs <>> [sx <>> []]
--- chunkedGo sxs sx sz 0     (h::t) = chunkedGo (sxs :< (sx <>> [])) [<h] sz sz t
--- chunkedGo sxs sx sz (S m) (h::t) = chunkedGo sxs (sx:<h) sz m t
---
--- ||| Groups a list of values into chunks of size `n`.
--- |||
--- ||| Only the last list might be shorter.
--- export
--- chunked : (n : Nat) -> (0 p : IsSucc n) => List a -> List (List a)
--- chunked _      []     = []
--- chunked (S sz) (h::t) = chunkedGo [<] [<h] sz sz t
+
+chunkedGo :
+     SnocList (Chunk a)
+  -> SnocList a
+  -> Nat
+  -> Nat
+  -> List a
+  -> List (Chunk a)
+chunkedGo sxs sx _  _     []     = sxs <>> [cast sx]
+chunkedGo sxs sx sz 0     (h::t) = chunkedGo (sxs :< (cast sx)) [<h] sz sz t
+chunkedGo sxs sx sz (S m) (h::t) = chunkedGo sxs (sx:<h) sz m t
+
+||| Groups a list of values into chunks of size `n`.
+|||
+||| Only the last list might be shorter.
+export
+chunked : (n : Nat) -> (0 p : IsSucc n) => List a -> List (Chunk a)
+chunked _      []     = []
+chunked (S sz) (h::t) = chunkedGo [<] [<h] sz sz t
 --
 -- export
 -- mapAccum : SnocList p -> (s -> o -> (s,p)) -> s -> List o -> (List p,s)
