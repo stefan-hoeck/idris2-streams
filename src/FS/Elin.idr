@@ -18,7 +18,9 @@ fromResult (Left err)  = absurd err
 ||| Runs a `Pull` to completion, collecting all output in a list.
 export covering
 pullListRes : (forall s . Pull (Elin s) o es ()) -> Result es (List o)
-pullListRes p = fromOutcome $ pullElin ((<>> []) <$> foldChunks [<] (<><) p)
+pullListRes p =
+  fromOutcome $
+    pullElin ((<>> []) <$> foldChunk [<] (\sc,v => sc <>< toList v) p)
 
 ||| Like `pullListRes`, but without the possibility of failure.
 export covering
@@ -28,12 +30,12 @@ pullList p = fromResult $ pullListRes p
 ||| Runs a `Pull` to completion, collecting all chunks of output in a list.
 ||| This allows us to observe the chunk structure of a `Pull`.
 export covering
-pullChunkRes : (forall s . Pull (Elin s) o es ()) -> Result es (List $ List o)
-pullChunkRes p = fromOutcome $ pullElin ((<>> []) <$> foldChunks [<] (:<) p)
+pullChunkRes : (forall s . Pull (Elin s) o es ()) -> Result es (List $ Chunk o)
+pullChunkRes p = fromOutcome $ pullElin ((<>> []) <$> foldChunk [<] (:<) p)
 
 ||| Like `echunks`, but without the possibility of failure.
 export covering
-pullChunks : (forall s . Pull (Elin s) o [] ()) -> List (List o)
+pullChunks : (forall s . Pull (Elin s) o [] ()) -> List (Chunk o)
 pullChunks p = fromResult $ pullChunkRes p
 
 ||| Runs a `Stream` to completion, collecting all output in a list.
@@ -49,14 +51,14 @@ streamList p = fromResult $ streamListRes p
 ||| Runs a `Stream` to completion, collecting all chunks of output in a list.
 ||| This allows us to observe the chunk structure of a `Stream`.
 export covering
-streamChunkRes : (forall s . Stream (Elin s) es o) -> Result es (List $ List o)
+streamChunkRes : (forall s . Stream (Elin s) es o) -> Result es (List $ Chunk o)
 streamChunkRes p = runElin (toChunks p)
 
 ||| Like `echunks`, but without the possibility of failure.
 export covering
-streamChunks : (forall s . Stream (Elin s) [] o) -> List (List o)
+streamChunks : (forall s . Stream (Elin s) [] o) -> List (Chunk o)
 streamChunks p = fromResult $ streamChunkRes p
 
 export covering
-runIO : Stream (Elin World) [] () -> IO ()
+runIO : Stream (Elin World) [] Void -> IO ()
 runIO = ignore . runElinIO . run

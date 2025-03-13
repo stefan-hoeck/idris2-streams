@@ -53,13 +53,13 @@ delayed dur v = sleep dur <+> pure v
 ||| Converts a bounded queue of chunks into an infinite stream
 ||| of values.
 export %inline
-dequeue : BQueue (List o) -> AsyncStream e es o
+dequeue : BQueue (Chunk o) -> AsyncStream e es o
 dequeue = repeat . evals . dequeue
 
 ||| Converts a channel of chunks into an infinite stream of values.
 export %inline
-receive : Channel (List o) -> AsyncStream e es o
-receive = unfoldEvalChunk . receive
+receive : Channel (Chunk o) -> AsyncStream e es o
+receive = unfoldEval . receive
 
 --------------------------------------------------------------------------------
 -- Interrupting Streams
@@ -83,7 +83,7 @@ interruptWhen str stop = do
   force $ do
     doneL <- deferredOf ()
     doneR <- deferredOf ()
-    let watcher := foreachChunk (\_ => putDeferred doneR ()) (any id stop)
+    let watcher := foreach (\_ => putDeferred doneR ()) (any id stop)
     pure $ bracket
       (assert_total $ parrun sc doneL (pure ()) watcher)
       (\f => putDeferred doneL () >> wait f)
@@ -101,7 +101,7 @@ timeout dur str = S $ do
 -- Merging Streams
 --------------------------------------------------------------------------------
 
-parameters (chnl : Channel (List o))
+parameters (chnl : Channel (Chunk o))
            (done : Deferred World ())
            (res  : Deferred World (Result es ()))
            (sema : IORef Nat)
@@ -125,7 +125,7 @@ parameters (chnl : Channel (List o))
   -- The running input stream writes all chunks of output to the channel.
   covering
   child : AsyncStream e es o -> Async e es (Fiber [] ())
-  child s = foreachChunk (ignore . send chnl) s |> parrunCase sc done out
+  child s = foreach (ignore . send chnl) s |> parrunCase sc done out
 
   -- starts running all input streams in parallel, and reads chunks of
   -- output from the bounded queue `que`.
@@ -153,7 +153,7 @@ merge ss  = Prelude.do
     -- A bounded queue where the running streams will write their output
     -- to. There will be no buffering: evaluating the streams will block
     -- until then next chunk of ouptut has been requested by the consumer.
-    chnl <- channelOf (List o) 0
+    chnl <- channelOf (Chunk o) 0
 
     -- Signals the exhaustion of the output stream, which will cause all
     -- input streams to be interrupted.
@@ -194,7 +194,7 @@ mergeHaltBoth s1 s2 =
 parameters (done      : Deferred World (Result es ()))
            (available : Semaphore)
            (running   : SignalRef Nat)
-           (output    : Channel (List o))
+           (output    : Channel (Chunk o))
            (sc        : Scope (Async e))
 
   -- Every time an inner or the outer stream terminates, the number
@@ -221,7 +221,7 @@ parameters (done      : Deferred World (Result es ()))
       poll $ ignore $ parrunCase sc
         done
         (\o => putErr done o >> decRunning >> release available)
-        (foreachChunk (ignore . send output) s)
+        (foreach (ignore . send output) s)
 
   -- Runs the outer stream on its own fiber until it terminates gracefully
   -- or fails with an error.
@@ -232,7 +232,7 @@ parameters (done      : Deferred World (Result es ()))
     parrunCase sc
       done
       (\o => putErr done o >> decRunning >> until running (== 0))
-      (foreach (inner . scope) ss)
+      (foreach1 (inner . scope) ss)
 
 ||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
 ||| opening at most `maxOpen` streams at any point in time.
@@ -277,7 +277,7 @@ parJoin maxOpen out = do
 
     -- the input channel used for the result stream. it will be
     -- closed when the last child was exhausted.
-    output    <- channelOf (List o) 0
+    output    <- channelOf (Chunk o) 0
 
     fbr       <- outer done available running output sc out
     -- the resulting stream should cleanup resources when it is done.

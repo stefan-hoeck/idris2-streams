@@ -1,8 +1,9 @@
 ||| Utilities for working with chunks of data.
 module FS.Chunk
 
+import Data.ByteString
 import Data.ByteVect
-import Data.Array
+import Data.List
 import public Data.Nat
 
 %default total
@@ -52,59 +53,131 @@ defaultChunkSize = 128
 -- Chunk
 --------------------------------------------------------------------------------
 
-public export
+export
 data Chunk : Type -> Type where
-  Lst   : List a -> Chunk a
-  Bytes : (sz : Nat) -> ByteVect sz -> Chunk Bits8
+  Lst : List a -> Chunk a
+  Bts : ByteString -> Chunk Bits8
 
 export
 Functor Chunk where
-  map f (Lst vs)      = Lst $ map f vs
-  map f (Bytes sz bv) = Lst $ map f (unpack bv)
+  map f (Lst vs) = Lst $ map f vs
+  map f (Bts bs) = Lst $ map f (unpack bs)
+
+export
+Foldable Chunk where
+  foldl f i (Lst vs) = foldl f i vs
+  foldl f i (Bts vs) = foldl f i vs
+
+  foldr f i (Lst vs) = foldr f i vs
+  foldr f i (Bts vs) = foldr f i vs
+
+  foldMap f (Lst vs) = foldMap f vs
+  foldMap f (Bts vs) = foldl (\x,v => x <+> f v) neutral vs
+
+  toList (Lst vs) = vs
+  toList (Bts vs) = unpack vs
+
+  null (Lst vs) = null vs
+  null (Bts vs) = null vs
+
+export
+Semigroup (Chunk a) where
+  Bts xs <+> Bts ys = Bts $ xs <+> ys
+  xs     <+> ys     =
+    if      null xs then ys
+    else if null ys then xs
+    else Lst (toList xs ++ toList ys)
+
+export
+Monoid (Chunk a) where
+  neutral = Lst []
+
+export %inline
+singleton : a -> Chunk a
+singleton v = Lst [v]
+
+export %inline
+fromList : List a -> Chunk a
+fromList = Lst
+
+export %inline
+fromSnoc : SnocList a -> Chunk a
+fromSnoc = Lst . (<>> [])
+
+export %inline
+Cast (List a) (Chunk a) where cast = Lst
+
+export %inline
+Cast (SnocList a) (Chunk a) where cast = Lst . (<>> [])
+
+export %inline
+Cast ByteString (Chunk Bits8) where cast = Bts
+
+export
+uncons : Chunk a -> Maybe (a, Chunk a)
+uncons (Lst (h::t))        = Just (h, Lst t)
+uncons (Bts $ BS (S k) bv) = Just (head bv, Bts (BS k $ tail bv))
+uncons _                   = Nothing
 
 --------------------------------------------------------------------------------
 -- Utilities
 --------------------------------------------------------------------------------
 
--- ||| Utility for implementing `FS.Pull.unfold`
--- export
--- unfoldImpl :
---      SnocList o
---   -> Nat
---   -> (s -> Either r (o,s))
---   -> s
---   -> (List o, Either r s)
--- unfoldImpl sx 0     f x = (sx <>> [], Right x)
--- unfoldImpl sx (S k) f x =
---   case f x of
---     Right (v,x2) => unfoldImpl (sx:<v) k f x2
---     Left res     => (sx <>> [], Left res)
---
--- ||| Utility for implementing `FS.Pull.unfoldMaybe`
--- export
--- unfoldMaybeImpl :
---      SnocList o
---   -> Nat
---   -> (s -> Maybe (o,s))
---   -> s
---   -> (List o, Maybe s)
--- unfoldMaybeImpl sx 0     f x = (sx <>> [], Just x)
--- unfoldMaybeImpl sx (S k) f x =
---   case f x of
---     Just (v,x2) => unfoldMaybeImpl (sx:<v) k f x2
---     Nothing     => (sx <>> [], Nothing)
---
--- ||| Utility for implementing `FS.Pull.iterate`
--- export
--- iterateImpl : SnocList o -> Nat -> (o -> o) -> o -> (List o, Maybe o)
--- iterateImpl sx 0     f x = (sx <>> [], Just x)
--- iterateImpl sx (S k) f x = iterateImpl (sx :< x) k f (f x)
---
--- ||| Stack-safe implementation of `splitAt`
--- export
--- splitAtImpl : SnocList a -> List a -> Nat -> (List a, List a)
--- splitAtImpl sv (v::vs) (S k) = splitAtImpl (sv:<v) vs k
--- splitAtImpl sv vs      _     = (sv <>> [], vs)
+export
+filter : (a -> Bool) -> Chunk a -> Chunk a
+filter pred (Lst vs) = Lst $ filter pred vs
+filter pred (Bts bs) = Bts $ filter pred bs
+
+export
+mapMaybe : (a -> Maybe b) -> Chunk a -> Chunk b
+mapMaybe f = fromList . mapMaybe f . toList
+
+||| Utility for implementing `FS.Pull.unfold`
+export
+unfoldImpl :
+     SnocList o
+  -> Nat
+  -> (s -> Either r (o,s))
+  -> s
+  -> (Chunk o, Either r s)
+unfoldImpl sx 0     f x = (cast sx, Right x)
+unfoldImpl sx (S k) f x =
+  case f x of
+    Right (v,x2) => unfoldImpl (sx:<v) k f x2
+    Left res     => (cast sx, Left res)
+
+||| Utility for implementing `FS.Pull.unfoldMaybe`
+export
+unfoldMaybeImpl :
+     SnocList o
+  -> Nat
+  -> (s -> Maybe (o,s))
+  -> s
+  -> (Chunk o, Maybe s)
+unfoldMaybeImpl sx 0     f x = (cast sx, Just x)
+unfoldMaybeImpl sx (S k) f x =
+  case f x of
+    Just (v,x2) => unfoldMaybeImpl (sx:<v) k f x2
+    Nothing     => (cast sx, Nothing)
+
+||| Utility for implementing `FS.Pull.iterate`
+export
+iterateImpl : SnocList o -> Nat -> (o -> o) -> o -> (Chunk o, Maybe o)
+iterateImpl sx 0     f x = (cast sx, Just x)
+iterateImpl sx (S k) f x = iterateImpl (sx :< x) k f (f x)
+
+||| Stack-safe implementation of `splitAt`
+export
+splitAt : Chunk a -> Nat -> (Chunk a, Chunk a)
+splitAt (Bts bs) n =
+  case splitAt n bs of
+    Nothing      => (Bts bs, Bts empty)
+    (Just (x,y)) => (Bts x, Bts y)
+splitAt (Lst vs) n = go [<] vs n
+  where
+    go : SnocList a -> List a -> Nat -> (Chunk a, Chunk a)
+    go sv (v::vs) (S k) = go (sv:<v) vs k
+    go sv vs      _     = (cast sv, cast vs)
 --
 -- ||| Used for implementing `FS.Pull.take`
 -- export
@@ -126,27 +199,35 @@ Functor Chunk where
 --   if      f x then takeWhileImpl tf (sx :< x) f xs
 --   else if tf  then Just (sx <>> [x], xs)
 --   else             Just (sx <>> [], x::xs)
---
--- ||| Used for implementing `FS.Pull.takeWhileJust`
--- export
--- takeWhileJustImpl : SnocList o -> List (Maybe o) -> (List o,List $ Maybe o)
--- takeWhileJustImpl sx []        = (sx <>> [], [])
--- takeWhileJustImpl sx (x :: xs) =
---   case x of
---     Nothing => (sx <>> [], Nothing :: xs)
---     Just v  => takeWhileJustImpl (sx :< v) xs
---
+
+||| Used for implementing `FS.Pull.takeWhileJust`
+export
+takeWhileJustImpl : SnocList o -> List (Maybe o) -> (Chunk o,List $ Maybe o)
+takeWhileJustImpl sx []        = (cast sx, [])
+takeWhileJustImpl sx (x :: xs) =
+  case x of
+    Nothing => (cast sx, Nothing :: xs)
+    Just v  => takeWhileJustImpl (sx :< v) xs
+
 -- ||| Used for implementing `FS.Pull.dropWhile` and `FS.Pull.dropThrough`
 -- export
 -- dropWhileImpl : (o -> Bool) -> List o -> List o
 -- dropWhileImpl f []        = []
 -- dropWhileImpl f (x :: xs) = if f x then dropWhileImpl f xs else x::xs
 --
--- ||| Used for implementing `FS.Pull.find`
--- export
--- findImpl : (o -> Bool) -> List o -> Maybe (o,List o)
--- findImpl f []        = Nothing
--- findImpl f (x :: xs) = if f x then Just (x,xs) else findImpl f xs
+||| Used for implementing `FS.Pull.find`
+export
+find : (o -> Bool) -> Chunk o -> Maybe (o,Chunk o)
+find f (Bts bs) =
+  case break f bs of
+    (_, BS (S k) v) => Just (head v, Bts (BS k $ tail v))
+    _               => Nothing
+find f (Lst vs) = go vs
+  where
+    go : List o -> Maybe (o,Chunk o)
+    go []        = Nothing
+    go (x :: xs) = if f x then Just (x, Lst xs) else go xs
+
 --
 -- chunkedGo :
 --      SnocList (List a)

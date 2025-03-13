@@ -8,4 +8,4 @@ import FS.Stream
 
 export %inline
 args : ELift1 World f => Stream f es String
-args = evals $ lift1 (ioToF1 getArgs)
+args = evalList $ lift1 (ioToF1 getArgs)
