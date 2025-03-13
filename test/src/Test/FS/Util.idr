@@ -2,7 +2,9 @@ module Test.FS.Util
 
 import public FS.Elin
 import public Hedgehog
+import Data.ByteString
 import Data.Linear.Ref1
+import Data.Vect
 import FS.Pull
 
 %default total
@@ -16,20 +18,25 @@ bytes : Gen Bits8
 bytes = anyBits8
 
 export
-byteLists : Gen (List Bits8)
-byteLists = list (linear 0 30) bytes
+byteChunks_ : Gen (List Bits8) -> Gen (Chunk Bits8)
+byteChunks_ gen =
+  choice [ map fromList gen, map (Chunk.bytes . pack) gen ]
 
 export
-byteChunks : Gen (List $ List Bits8)
-byteChunks = list (linear 0 20) byteLists
+byteChunks : Gen (Chunk Bits8)
+byteChunks = byteChunks_ $ list (linear 0 30) bytes
 
 export
-nonEmptyByteLists : Gen (List Bits8)
-nonEmptyByteLists = list (linear 1 30) bytes
+byteChunkLists : Gen (List $ Chunk Bits8)
+byteChunkLists = list (linear 0 20) byteChunks
+
+export
+nonEmptyByteChunks : Gen (Chunk Bits8)
+nonEmptyByteChunks = byteChunks_ $ list (linear 1 30) bytes
 
 export
 byteSnocLists : Gen (SnocList Bits8)
-byteSnocLists = ([<] <><) <$> byteLists
+byteSnocLists = ([<] <><) <$> list (linear 0 30) bytes
 
 export
 smallNats : Gen Nat
@@ -60,39 +67,39 @@ fold1s f vs =
 
 ||| Removes all empty lists from the given list of lists
 export
-nonEmpty : List (List a) -> List (List a)
+nonEmpty : List (Chunk a) -> List (Chunk a)
 nonEmpty = filter (not . null)
 
-||| Returns the (optional) last element of a list wrapped in a list
-export
-lastl : List a -> List a
-lastl []     = []
-lastl [v]    = [v]
-lastl (_::t) = lastl t
-
-||| Returns the (optional) first non-empty chunk in a list of chunks.
-export
-firstNotNull : List (List a) -> List (List a)
-firstNotNull []      = []
-firstNotNull ([]::t) = firstNotNull t
-firstNotNull (h::t)  = [h]
-
-||| Returns the (optional) head of the first non-empty chunk in a list
-||| of chunks.
-export
-firstl : List (List a) -> List (List a)
-firstl vss =
-  case firstNotNull vss of
-    (h::_)::_ => [[h]]
-    _         => []
-
-||| Emits the first chunk of data in the given foldable (if any).
-export
-headOut : Foldable m => m (Chunk o, Pull f o es ()) -> Pull f o es ()
-headOut ps =
-  case toList ps of
-    []          => pure ()
-    (vs,_) :: _ => output vs
+-- ||| Returns the (optional) last element of a list wrapped in a list
+-- export
+-- lastl : List a -> List a
+-- lastl []     = []
+-- lastl [v]    = [v]
+-- lastl (_::t) = lastl t
+--
+-- ||| Returns the (optional) first non-empty chunk in a list of chunks.
+-- export
+-- firstNotNull : List (List a) -> List (List a)
+-- firstNotNull []      = []
+-- firstNotNull ([]::t) = firstNotNull t
+-- firstNotNull (h::t)  = [h]
+--
+-- ||| Returns the (optional) head of the first non-empty chunk in a list
+-- ||| of chunks.
+-- export
+-- firstl : List (List a) -> List (List a)
+-- firstl vss =
+--   case firstNotNull vss of
+--     (h::_)::_ => [[h]]
+--     _         => []
+--
+-- ||| Emits the first chunk of data in the given foldable (if any).
+-- export
+-- headOut : Foldable m => m (Chunk o, Pull f o es ()) -> Pull f o es ()
+-- headOut ps =
+--   case toList ps of
+--     []          => pure ()
+--     (vs,_) :: _ => output vs
 --
 -- ||| Returns the first pull in the given foldable (if any).
 -- export

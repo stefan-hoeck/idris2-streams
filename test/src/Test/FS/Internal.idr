@@ -1,5 +1,6 @@
 module Test.FS.Internal
 
+import FS.Chunk
 import FS.Pull
 import Test.FS.Util
 
@@ -10,11 +11,11 @@ init []     = []
 init [v]    = []
 init (h::t) = h :: init t
 
--- prop_chunkedConcat : Property
--- prop_chunkedConcat =
---   property $ do
---     [CS sz,vs] <- forAll $ hlist [chunkSizes, byteLists]
---     join (chunked sz vs) === vs
+prop_chunkedConcat : Property
+prop_chunkedConcat =
+  property $ do
+    [CS sz,vs] <- forAll $ hlist [chunkSizes, list (linear 0 30) bytes]
+    fastConcat (chunked sz vs) === fromList vs
 
 -- prop_chunkedSize : Property
 -- prop_chunkedSize =
@@ -30,9 +31,9 @@ init (h::t) = h :: init t
 
 export
 props : Group
--- props =
---   MkGroup "FS.Internal.Chunk"
---     [ ("prop_chunkedConcat", prop_chunkedConcat)
+props =
+  MkGroup "FS.Internal.Chunk"
+    [ ("prop_chunkedConcat", prop_chunkedConcat)
 --     , ("prop_chunkedSize", prop_chunkedSize)
 --     , ("prop_chunkedSizeLTE", prop_chunkedSizeLTE)
---     ]
+    ]

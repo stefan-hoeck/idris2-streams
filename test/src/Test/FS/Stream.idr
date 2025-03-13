@@ -12,12 +12,12 @@ import Test.FS.Util
 -- Properties
 --------------------------------------------------------------------------------
 
--- prop_emit : Property
--- prop_emit =
---   property $ do
---     v <- forAll bytes
---     streamList (emit v) === [v]
---
+prop_emit : Property
+prop_emit =
+  property $ do
+    v <- forAll bytes
+    streamList (emit v) === [v]
+
 -- prop_emits : Property
 -- prop_emits =
 --   property $ do
@@ -364,9 +364,9 @@ import Test.FS.Util
 
 export
 props : Group
--- props =
---   MkGroup "FS.Stream"
---     [ ("prop_emit", prop_emit)
+props =
+  MkGroup "FS.Stream"
+    [ ("prop_emit", prop_emit)
 --     , ("prop_emits", prop_emits)
 --     , ("prop_emitsChunks", prop_emitsChunks)
 --     , ("prop_unfoldChunk", prop_unfoldChunk)
@@ -420,4 +420,4 @@ props : Group
 --     , ("prop_zipWithScan1", prop_zipWithScan1)
 --     , ("prop_zipWithPrevious", prop_zipWithPrevious)
 --     , ("prop_intersperse", prop_intersperse)
---     ]
+    ]

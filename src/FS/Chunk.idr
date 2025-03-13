@@ -119,6 +119,41 @@ uncons (Lst (h::t))        = Just (h, Lst t)
 uncons (Bts $ BS (S k) bv) = Just (head bv, Bts (BS k $ tail bv))
 uncons _                   = Nothing
 
+export
+Eq a => Eq (Chunk a) where
+  Bts xs == Bts ys = xs == ys
+  xs     == ys     = toList xs == toList ys
+
+export
+Show a => Show (Chunk a) where
+  showPrec p xs = showCon p "fromList " (show $ toList xs)
+
+export %inline
+bytes : ByteString -> Chunk Bits8
+bytes = Bts
+
+concBytes : SnocList ByteString -> List (Chunk Bits8) -> Chunk Bits8
+concBytes sx []      = Bts (fastConcat $ sx <>> [])
+concBytes sx (x::xs) =
+  case x of
+    Bts (BS 0 _) => concBytes sx xs
+    Bts bs       => concBytes (sx:<bs) xs
+    Lst []       => concBytes sx xs
+    Lst vs       => concBytes (sx :< pack vs) xs
+
+concLists : SnocList a -> List (Chunk a) -> Chunk a
+concLists sx []        = cast sx
+concLists sx (x :: xs) =
+  case x of
+    Lst []       => concLists sx xs
+    Lst vs       => concLists (sx <>< vs) xs
+    Bts (BS 0 _) => concBytes [< pack $ sx <>> []] xs
+    Bts bs       => concBytes [< pack $ sx <>> [], bs] xs
+
+export
+fastConcat : List (Chunk a) -> Chunk a
+fastConcat = concLists [<]
+
 --------------------------------------------------------------------------------
 -- Utilities
 --------------------------------------------------------------------------------
@@ -178,9 +213,13 @@ splitAt (Lst vs) n = go [<] vs n
     go : SnocList a -> List a -> Nat -> (Chunk a, Chunk a)
     go sv (v::vs) (S k) = go (sv:<v) vs k
     go sv vs      _     = (cast sv, cast vs)
---
+
 -- ||| Used for implementing `FS.Pull.take`
 -- export
+-- take : SnocList o -> Nat -> List o -> (Nat, List o, List o)
+-- take sx (S k) (x :: xs) = takeImpl (sx :< x) k xs
+-- take sx k     xs        = (k, sx <>> [], xs)
+--
 -- takeImpl : SnocList o -> Nat -> List o -> (Nat, List o, List o)
 -- takeImpl sx (S k) (x :: xs) = takeImpl (sx :< x) k xs
 -- takeImpl sx k     xs        = (k, sx <>> [], xs)

@@ -12,103 +12,103 @@ import public Test.FS.Util
 -- Properties
 --------------------------------------------------------------------------------
 
--- prop_output1 : Property
--- prop_output1 =
---   property $ do
---     v <- forAll bytes
---     pullList (output1 v) === [v]
---
--- prop_output : Property
--- prop_output =
---   property $ do
---     vs <- forAll byteLists
---     pullList (output vs) === vs
---
--- prop_outputChunks : Property
--- prop_outputChunks =
---   property $ do
---     vs <- forAll byteLists
---     pullChunks (output vs) === nonEmpty [vs]
---
--- prop_foldable : Property
--- prop_foldable =
---   property $ do
---     sv <- forAll byteSnocLists
---     pullList (foldable sv) === (sv <>> [])
---
--- prop_unfoldChunkLeft : Property
--- prop_unfoldChunkLeft =
---   property $ do
---     vs <- forAll byteLists
---     let cs := pullChunks $ unfoldChunk () (const (vs, Left ()))
---     case vs of
---       [] => cs === []
---       _  => cs === [vs]
---
--- prop_unfoldChunk : Property
--- prop_unfoldChunk =
---   property $ do
---     n <- forAll posNats
---     pullChunks (unfoldChunk n next) === map (\x => replicate x x) [n..1]
---
---   where
---     next : Nat -> (List Nat, Either () Nat)
---     next 0       = ([], Left ())
---     next n@(S k) = (replicate n n, Right k)
---
--- prop_unfoldChunkMaybe : Property
--- prop_unfoldChunkMaybe =
---   property $ do
---     n <- forAll posNats
---     pullChunks (unfoldChunkMaybe n next) === map (\x => replicate x x) [n..1]
---
---   where
---     next : Nat -> (List Nat, Maybe Nat)
---     next 0       = ([], Nothing)
---     next n@(S k) = (replicate n n, Just k)
---
--- prop_unfold : Property
--- prop_unfold =
---   property $ do
---     n <- forAll posNats
---     pullList (unfold n next) === map (\x => x * x) [n..1]
---   where
---     next : Nat -> Either () (Nat,Nat)
---     next 0       = Left ()
---     next n@(S k) = Right (n*n,k)
---
--- prop_unfoldAsChunks : Property
--- prop_unfoldAsChunks =
---   property $ do
---     [cs,n] <- forAll $ hlist [chunkSizes, posNats]
---     pullChunks (unfold @{cs} n next) === chunkedCS cs (map (\x => x * x) [n..1])
---   where
---     next : Nat -> Either () (Nat,Nat)
---     next 0       = Left ()
---     next n@(S k) = Right (n*n,k)
---
--- prop_unfoldMaybe : Property
--- prop_unfoldMaybe =
---   property $ do
---     n <- forAll posNats
---     pullList (unfoldMaybe n next) === map (\x => x * x) [n..1]
---
---   where
---     next : Nat -> Maybe (Nat,Nat)
---     next 0       = Nothing
---     next n@(S k) = Just (n*n,k)
---
--- prop_unfoldMaybeAsChunks : Property
--- prop_unfoldMaybeAsChunks =
---   property $ do
---     [cs,n] <- forAll $ hlist [chunkSizes, posNats]
---     pullChunks (unfoldMaybe @{cs} n next) === chunkedCS cs (map (\x => x * x) [n..1])
---
---   where
---     next : Nat -> Maybe (Nat,Nat)
---     next 0       = Nothing
---     next n@(S k) = Just (n*n,k)
---
+prop_output1 : Property
+prop_output1 =
+  property $ do
+    v <- forAll bytes
+    pullList (output1 v) === [v]
+
+prop_output : Property
+prop_output =
+  property $ do
+    vs <- forAll byteChunks
+    pullList (output vs) === toList vs
+
+prop_outputChunks : Property
+prop_outputChunks =
+  property $ do
+    vs <- forAll byteChunks
+    pullChunks (output vs) === nonEmpty [vs]
+
+prop_foldable : Property
+prop_foldable =
+  property $ do
+    sv <- forAll byteSnocLists
+    pullList (foldable sv) === (sv <>> [])
+
+prop_unfoldLeft : Property
+prop_unfoldLeft =
+  property $ do
+    vs <- forAll byteChunks
+    let cs := pullChunks $ unfold () (const (vs, Left ()))
+    case null vs of
+      True => cs === []
+      _    => cs === [vs]
+
+prop_unfold : Property
+prop_unfold =
+  property $ do
+    n <- forAll posNats
+    pullChunks (unfold n next) === map (\x => fromList $ replicate x x) [n..1]
+
+  where
+    next : Nat -> (Chunk Nat, Either () Nat)
+    next 0       = (neutral, Left ())
+    next n@(S k) = (fromList $ replicate n n, Right k)
+
+prop_unfoldMaybe : Property
+prop_unfoldMaybe =
+  property $ do
+    n <- forAll posNats
+    pullChunks (unfoldMaybe n next) === map (\x => fromList $ replicate x x) [n..1]
+
+  where
+    next : Nat -> (Chunk Nat, Maybe Nat)
+    next 0       = (neutral, Nothing)
+    next n@(S k) = (fromList $ replicate n n, Just k)
+
+prop_unfold1 : Property
+prop_unfold1 =
+  property $ do
+    n <- forAll posNats
+    pullList (unfold1 n next) === map (\x => x * x) [n..1]
+  where
+    next : Nat -> Either () (Nat,Nat)
+    next 0       = Left ()
+    next n@(S k) = Right (n*n,k)
+
+prop_unfold1AsChunks : Property
+prop_unfold1AsChunks =
+  property $ do
+    [cs,n] <- forAll $ hlist [chunkSizes, posNats]
+    pullChunks (unfold1 @{cs} n next) === chunkedCS cs (map (\x => x * x) [n..1])
+  where
+    next : Nat -> Either () (Nat,Nat)
+    next 0       = Left ()
+    next n@(S k) = Right (n*n,k)
+
+prop_unfold1Maybe : Property
+prop_unfold1Maybe =
+  property $ do
+    n <- forAll posNats
+    pullList (unfoldMaybe1 n next) === map (\x => x * x) [n..1]
+
+  where
+    next : Nat -> Maybe (Nat,Nat)
+    next 0       = Nothing
+    next n@(S k) = Just (n*n,k)
+
+prop_unfoldMaybe1AsChunks : Property
+prop_unfoldMaybe1AsChunks =
+  property $ do
+    [cs,n] <- forAll $ hlist [chunkSizes, posNats]
+    pullChunks (unfoldMaybe1 @{cs} n next) === chunkedCS cs (map (\x => x * x) [n..1])
+
+  where
+    next : Nat -> Maybe (Nat,Nat)
+    next 0       = Nothing
+    next n@(S k) = Just (n*n,k)
+
 -- prop_fill : Property
 -- prop_fill =
 --   property $ do
@@ -313,19 +313,19 @@ import public Test.FS.Util
 
 export
 props : Group
--- props =
---   MkGroup "FS.Pull"
---     [ ("prop_output1", prop_output1)
---     , ("prop_output", prop_output)
---     , ("prop_outputChunks", prop_outputChunks)
---     , ("prop_foldable", prop_foldable)
---     , ("prop_unfoldChunkLeft", prop_unfoldChunkLeft)
---     , ("prop_unfoldChunk", prop_unfoldChunk)
---     , ("prop_unfoldChunkMaybe", prop_unfoldChunkMaybe)
---     , ("prop_unfold", prop_unfold)
---     , ("prop_unfoldAsChunks", prop_unfoldAsChunks)
---     , ("prop_unfoldMaybe", prop_unfoldMaybe)
---     , ("prop_unfoldMaybeAsChunks", prop_unfoldMaybeAsChunks)
+props =
+  MkGroup "FS.Pull"
+    [ ("prop_output1", prop_output1)
+    , ("prop_output", prop_output)
+    , ("prop_outputChunks", prop_outputChunks)
+    , ("prop_foldable", prop_foldable)
+    , ("prop_unfoldLeft", prop_unfoldLeft)
+    , ("prop_unfold", prop_unfold)
+    , ("prop_unfoldMaybe", prop_unfoldMaybe)
+    , ("prop_unfold1", prop_unfold1)
+    , ("prop_unfold1AsChunks", prop_unfold1AsChunks)
+    , ("prop_unfoldMaybe1", prop_unfoldMaybe1)
+    , ("prop_unfoldMaybe1AsChunks", prop_unfoldMaybe1AsChunks)
 --     , ("prop_fill", prop_fill)
 --     , ("prop_fillChunks", prop_fillChunks)
 --     , ("prop_iterate", prop_iterate)
@@ -355,4 +355,4 @@ props : Group
 --     , ("prop_find", prop_find)
 --     , ("prop_foldChunks", prop_foldChunks)
 --     , ("prop_fold", prop_fold)
---     ]
+    ]
