@@ -2,6 +2,7 @@ module FS.Pull
 
 import public Data.Linear.ELift1
 import public FS.ChunkSize
+import public FS.Chunk
 import public FS.Scope
 
 import Control.Monad.Elin
@@ -12,7 +13,6 @@ import Data.Maybe
 import Data.Nat
 import Data.SortedMap
 
-import FS.Internal.Chunk
 
 import IO.Async
 
