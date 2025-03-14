@@ -1,10 +1,14 @@
 ||| Size-indexed chunks of data
-module FS.Internal.IChunk
+module Data.Chunk.Indexed
 
-import Data.Array.Core
+import Data.Array.Core as AC
 import Data.Array.Indexed
-import Data.Buffer.Core
+import Data.Array.Mutable as MA
+
+import Data.Buffer.Core as BC
 import Data.Buffer.Indexed
+import Data.Buffer.Mutable as MB
+
 import Data.ByteVect
 import Data.Nat.BSExtra
 import Data.Vect
@@ -27,7 +31,7 @@ data Inner : Nat -> Type -> Type where
 ||| detail.
 public export
 record IChunk n a where
-  constructor C
+  constructor IC
   {0 len  : Nat}
   offset  : Nat
   0 lte   : LTE (offset+n) len
@@ -40,7 +44,7 @@ record IChunk n a where
 ||| Reads the value of an `IChunk` at the given position
 export
 at : IChunk n a -> Fin n -> a
-at (C o p arr) x =
+at (IC o p arr) x =
  let 0 prf := transitive (ltPlusRight $ finToNatLT x) p
   in case arr of
        Arr vs => atNat vs (o + finToNat x) @{prf}
@@ -65,40 +69,36 @@ head c = at c 0
 --------------------------------------------------------------------------------
 
 export %inline
-fromArray : IArray n a -> IChunk n a
-fromArray arr = C 0 reflexive (Arr arr)
+iempty : IChunk 0 a
+iempty = IC 0 LTEZero (Arr empty)
 
 export %inline
-fill : (n : Nat) -> a -> IChunk n a
-fill n = fromArray . fill n
+fromIArray : IArray n a -> IChunk n a
+fromIArray arr = IC 0 reflexive (Arr arr)
 
 export %inline
-generate : (n : Nat) -> (Fin n -> a) -> IChunk n a
-generate n = fromArray . generate n
-
-export %inline
-iterate : (n : Nat) -> (a -> a) -> a -> IChunk n a
-iterate n f = fromArray . iterate n f
+igenerate : (n : Nat) -> (Fin n -> a) -> IChunk n a
+igenerate n = fromIArray . generate n
 
 ||| Copy the values in a list to an array of the same length.
 export %inline
-chunkL : (ls : List a) -> IChunk (length ls) a
-chunkL xs = fromArray $ arrayL xs
+ichunkL : (ls : List a) -> IChunk (length ls) a
+ichunkL xs = fromIArray $ arrayL xs
 
 ||| Copy the values in a vector to an array of the same length.
 export %inline
-chunk : {n : _} -> Vect n a -> IChunk n a
-chunk xs = fromArray $ array xs
+ichunk : {n : _} -> Vect n a -> IChunk n a
+ichunk xs = fromIArray $ array xs
 
 ||| Wrap a byte vector in an indexed chunk.
 export %inline
 fromByteVect : ByteVect n -> IChunk n Bits8
-fromByteVect (BV b o p) = C o p (Bts b)
+fromByteVect (BV b o p) = IC o p (Bts b)
 
 ||| Wrap a byte vector in an indexed chunk.
 export %inline
-fromBuffer : IBuffer n -> IChunk n Bits8
-fromBuffer buf = C 0 reflexive (Bts buf)
+fromIBuffer : IBuffer n -> IChunk n Bits8
+fromIBuffer buf = IC 0 reflexive (Bts buf)
 
 --------------------------------------------------------------------------------
 -- Interfaces
@@ -106,11 +106,11 @@ fromBuffer buf = C 0 reflexive (Bts buf)
 
 export %inline
 Cast (IArray n a) (IChunk n a) where
-  cast = fromArray
+  cast = fromIArray
 
 export %inline
 {n : _} -> Cast (Vect n a) (IChunk n a) where
-  cast = chunk
+  cast = ichunk
 
 export %inline
 Cast (ByteVect n) (IChunk n Bits8) where
@@ -118,11 +118,11 @@ Cast (ByteVect n) (IChunk n Bits8) where
 
 export %inline
 Cast (IBuffer n) (IChunk n Bits8) where
-  cast = fromBuffer
+  cast = fromIBuffer
 
 export %inline
 {n : _} -> Functor (IChunk n) where
-  map f chnk = generate n (f . at chnk)
+  map f chnk = igenerate n (f . at chnk)
 
 ||| Lexicographic comparison of Arrays of distinct length
 export
@@ -190,6 +190,59 @@ export
   null _ = n == Z
 
 --------------------------------------------------------------------------------
+-- Non-indexed Chunks
+--------------------------------------------------------------------------------
+
+public export
+record Chunk a where
+  constructor C
+  size   : Nat
+  values : IChunk size a
+
+export %inline
+wrap : {n : _} -> IChunk n a -> Chunk a
+wrap = C n
+
+export
+Eq a => Eq (Chunk a) where
+  C l1 c1 == C l2 c2 = heq c1 c2
+
+export
+Ord a => Ord (Chunk a) where
+  compare (C l1 c1) (C l2 c2) = hcomp c1 c2
+
+export
+Functor Chunk where
+  map f (C n vs) = C n $ map f vs
+
+export
+Foldable Chunk where
+  foldl f i (C _ vs) = foldl f i vs
+  foldr f i (C _ vs) = foldr f i vs
+  foldMap f (C _ vs) = foldMap f vs
+  toList (C _ vs) = toList vs
+  null (C 0 _) = True
+  null _       = False
+
+export %inline
+Cast (List a) (Chunk a) where
+  cast vs = C _ $ ichunkL vs
+
+export %inline
+Cast (SnocList a) (Chunk a) where
+  cast = cast . (<>> [])
+
+--------------------------------------------------------------------------------
+-- Generating Chunks
+--------------------------------------------------------------------------------
+
+%inline
+freezeChunk : Ix m n -> MArray s n a -> (Chunk a -> b) -> F1 s b
+freezeChunk ix x fun t =
+  let arr # t := AC.unsafeFreeze x t
+   in fun (C (ixToNat ix) (IC 0 (ixLTE _) $ Arr arr)) # t
+
+--------------------------------------------------------------------------------
 -- Subchunks
 --------------------------------------------------------------------------------
 
@@ -197,15 +250,63 @@ export
 ||| the input string. O(1)
 export
 take : (0 k : Nat) -> (0 lt : LTE k n) => IChunk n a -> IChunk k a
-take k (C o p arr) = C o (transitive (ltePlusRight o lt) p) arr
+take k (IC o p arr) = IC o (transitive (ltePlusRight o lt) p) arr
 
 ||| Remove the first `n` values from an `IChunk`. O(1)
-export
+export %inline
 drop : (k : Nat) -> (0 lt : LTE k n) => IChunk n a -> IChunk (n `minus` k) a
-drop k (C o p arr) =
+drop k (IC o p arr) =
   -- p        : o + n             <= bufLen
   -- lt       : k                 <= n
   -- required : (o + k) + (n - k) <= bufLen
   let 0 q := cong (o +) (plusMinus k n lt)
       0 r := plusAssociative o k (n `minus` k)
-   in C (o + k) (rewrite (trans (sym r) q) in p) arr
+   in IC (o + k) (rewrite (trans (sym r) q) in p) arr
+
+||| Drop the first value from a non-empty chunk. O(1)
+export %inline
+tail : IChunk (S n) a -> IChunk n a
+tail (IC o p arr) = IC (S o) (ltePlusSuccRight p) arr
+
+--------------------------------------------------------------------------------
+-- Concatenating Chunks
+--------------------------------------------------------------------------------
+
+export %inline
+copyBytes :
+     Inner m Bits8
+  -> (srcOffset,dstOffset : Nat)
+  -> (len : Nat)
+  -> {auto 0 p1 : LTE (srcOffset + len) m}
+  -> {auto 0 p2 : LTE (dstOffset + len) n}
+  -> (r         : MBuffer s n)
+  -> F1' s
+copyBytes (Arr x)= icopyToBuf x
+copyBytes (Bts x)= BC.icopy x
+
+||| Concatenate two `Chunk`s. O(n + m).
+export
+append : {m,n : _} -> IChunk m a -> IChunk n a  -> IChunk (m + n) a
+append {m = 0} _  c2 = c2
+append {n = 0} c1 _  = rewrite plusZeroRightNeutral m in c1
+append (IC o1 lte1 (Bts src1)) (IC o2 lte2 src2) =
+  run1 $ \t =>
+   let arr # t := mbuffer1 (m+n) t
+       _   # t := BC.icopy {n = m+n} src1 o1 0 m @{lte1} @{lteAddRight _} arr t
+       _   # t := copyBytes src2 o2 m n @{lte2} @{reflexive} arr t
+       frz # t := BC.unsafeFreeze arr t
+    in IC 0 reflexive (Bts frz) # t
+append (IC o1 lte1 (Arr src1)) (IC o2 lte2 s2)   =
+  case s2 of
+    Bts src2 => run1 $ \t =>
+     let arr # t := mbuffer1 (m+n) t
+         _   # t := AC.icopyToBuf {n = m+n} src1 o1 0 m @{lte1} @{lteAddRight _} arr t
+         _   # t := BC.icopy src2 o2 m n @{lte2} @{reflexive} arr t
+         frz # t := BC.unsafeFreeze arr t
+      in IC 0 reflexive (Bts frz) # t
+    Arr src2 => run1 $ \t =>
+     let arr # t := unsafeMArray1 (m+n) t
+         _   # t := AC.icopy {n = m+n} src1 o1 0 m @{lte1} @{lteAddRight _} arr t
+         _   # t := AC.icopy src2 o2 m n @{lte2} @{reflexive} arr t
+         frz # t := AC.unsafeFreeze arr t
+      in IC 0 reflexive (Arr frz) # t

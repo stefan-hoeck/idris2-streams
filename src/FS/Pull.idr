@@ -1,7 +1,7 @@
 module FS.Pull
 
+import public Data.Chunk
 import public Data.Linear.ELift1
-import public FS.Chunk
 import public FS.Scope
 
 import Control.Monad.Elin
@@ -169,13 +169,13 @@ output1 = Output . singleton
 ||| Emits a list of values
 export %inline
 output : Chunk o -> Pull f o es ()
-output Empty = pure ()
-output vs    = Output vs
+output (C 0 _) = pure ()
+output vs      = Output vs
 
 ||| Emits a list of values
 export %inline
 outputList : List o -> Pull f o es ()
-outputList vs = output (fromList vs)
+outputList vs = output (chunkL vs)
 
 ||| Emits values from an arbitrary foldable
 export %inline
@@ -196,7 +196,7 @@ unfold init g =
 ||| Emits values until the given generator function returns a `Left`
 export %inline
 unfold1 : ChunkSize => (init : x) -> (x -> Either r (o,x)) -> Pull f o es r
-unfold1 @{CS n} init g = unfold init (unfoldImpl [<] n g)
+unfold1 @{CS n} init g = unfold init (generateImpl [<] g n)
 
 ||| Like `unfoldMaybe` but emits values in chunks.
 export
@@ -331,7 +331,8 @@ acquire = Acquire
 ||| Prepends a list of values to a `Pull`
 export %inline
 cons : Chunk o -> Pull f o es r -> Pull f o es r
-cons vs p = if null vs then p else Output vs >> p
+cons (C 0 _) p = p
+cons vs      p = Output vs >> p
 
 ||| Splits the first chunk of values from the head of a `Pull`, returning
 ||| either the final result or a list of values plus the remainder of the
@@ -515,9 +516,9 @@ takeWhileJust :
 takeWhileJust p =
   assert_total $ uncons p >>= \case
     Left v      => pure (pure v)
-    Right (o,p) => case takeWhileJustImpl [<] (toList o) of
-      (l,[]) => cons l $ takeWhileJust p
-      (l,r)  => output l $> cons (fromList r) p
+    Right (o,p) => case takeWhileJustImpl o of
+      (l,C 0 _) => Output l >> takeWhileJust p
+      (l,r)     => output l $> cons r p
 --
 -- ||| Emits the last `n` elements of the input
 -- |||

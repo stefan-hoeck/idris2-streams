@@ -9,10 +9,12 @@ depends    = base         >= 0.7.0
            , bytestring
            , elin
 
-modules = FS
+modules = Data.Chunk
+        , Data.Chunk.Indexed
+
+        , FS
         , FS.Bytes
         , FS.Elin
-        , FS.Chunk
         , FS.Pull
         , FS.Scope
         , FS.Stream
@@ -23,4 +25,3 @@ modules = FS
         , FS.Concurrent.Util
 
         , FS.Internal.Bytes
-        , FS.Internal.IChunk
