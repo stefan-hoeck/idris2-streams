@@ -169,13 +169,13 @@ output1 = Output . singleton
 ||| Emits a list of values
 export %inline
 output : Chunk o -> Pull f o es ()
-output vs = if null vs then pure () else Output vs
+output Empty = pure ()
+output vs    = Output vs
 
 ||| Emits a list of values
 export %inline
 outputList : List o -> Pull f o es ()
-outputList [] = pure ()
-outputList vs = Output (cast vs)
+outputList vs = output (fromList vs)
 
 ||| Emits values from an arbitrary foldable
 export %inline

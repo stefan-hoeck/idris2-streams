@@ -5,6 +5,7 @@ import Data.Array.Core
 import Data.Array.Indexed
 import Data.Buffer.Core
 import Data.Buffer.Indexed
+import Data.ByteVect
 import Data.Nat.BSExtra
 import Data.Vect
 
@@ -14,15 +15,23 @@ import Data.Vect
 -- IChunk
 --------------------------------------------------------------------------------
 
+public export
+data Inner : Nat -> Type -> Type where
+  Arr : IArray n a -> Inner n a
+  Bts : IBuffer n -> Inner n Bits8
+
 ||| A size-indexed chunk of values.
 |||
 ||| Currently, the constructors are exported for reasons of convenience.
 ||| Please note, however, that the internal structure is an implementation
 ||| detail.
 public export
-data IChunk : Nat -> Type -> Type where
-  Arr : (off : Nat) -> (0 lte : LTE (off+len) n) -> IArray n a -> IChunk len a
-  Bts : (off : Nat) -> (0 lte : LTE (off+len) n) -> IBuffer n -> IChunk len Bits8
+record IChunk n a where
+  constructor C
+  {0 len  : Nat}
+  offset  : Nat
+  0 lte   : LTE (offset+n) len
+  values  : Inner len a
 
 --------------------------------------------------------------------------------
 -- Indexing
@@ -31,10 +40,11 @@ data IChunk : Nat -> Type -> Type where
 ||| Reads the value of an `IChunk` at the given position
 export
 at : IChunk n a -> Fin n -> a
-at (Arr o lte arr) x =
-  atNat arr (o + finToNat x) @{transitive (ltPlusRight $ finToNatLT x) lte}
-at (Bts o lte buf) x =
-  atNat buf (o + finToNat x) @{transitive (ltPlusRight $ finToNatLT x) lte}
+at (C o p arr) x =
+ let 0 prf := transitive (ltPlusRight $ finToNatLT x) p
+  in case arr of
+       Arr vs => atNat vs (o + finToNat x) @{prf}
+       Bts vs => atNat vs (o + finToNat x) @{prf}
 
 ||| Safely access a value in a chunk at position `n - m`.
 export %inline
@@ -46,13 +56,17 @@ export %inline
 atNat : IChunk n a -> (m : Nat) -> {auto 0 lt : LT m n} -> a
 atNat bv x = at bv (natToFinLT x)
 
+export %inline
+head : IChunk (S n) a -> a
+head c = at c 0
+
 --------------------------------------------------------------------------------
 -- Generating IChunks
 --------------------------------------------------------------------------------
 
 export %inline
 fromArray : IArray n a -> IChunk n a
-fromArray = Arr 0 reflexive
+fromArray arr = C 0 reflexive (Arr arr)
 
 export %inline
 fill : (n : Nat) -> a -> IChunk n a
@@ -76,6 +90,16 @@ export %inline
 chunk : {n : _} -> Vect n a -> IChunk n a
 chunk xs = fromArray $ array xs
 
+||| Wrap a byte vector in an indexed chunk.
+export %inline
+fromByteVect : ByteVect n -> IChunk n Bits8
+fromByteVect (BV b o p) = C o p (Bts b)
+
+||| Wrap a byte vector in an indexed chunk.
+export %inline
+fromBuffer : IBuffer n -> IChunk n Bits8
+fromBuffer buf = C 0 reflexive (Bts buf)
+
 --------------------------------------------------------------------------------
 -- Interfaces
 --------------------------------------------------------------------------------
@@ -83,6 +107,18 @@ chunk xs = fromArray $ array xs
 export %inline
 Cast (IArray n a) (IChunk n a) where
   cast = fromArray
+
+export %inline
+{n : _} -> Cast (Vect n a) (IChunk n a) where
+  cast = chunk
+
+export %inline
+Cast (ByteVect n) (IChunk n Bits8) where
+  cast = fromByteVect
+
+export %inline
+Cast (IBuffer n) (IChunk n Bits8) where
+  cast = fromBuffer
 
 export %inline
 {n : _} -> Functor (IChunk n) where
@@ -152,3 +188,24 @@ export
   foldMap f = foldr (\v => (f v <+>)) neutral
   toList = ontoList [] n
   null _ = n == Z
+
+--------------------------------------------------------------------------------
+-- Subchunks
+--------------------------------------------------------------------------------
+
+||| Return an `IChunk` with the first `n` values of
+||| the input string. O(1)
+export
+take : (0 k : Nat) -> (0 lt : LTE k n) => IChunk n a -> IChunk k a
+take k (C o p arr) = C o (transitive (ltePlusRight o lt) p) arr
+
+||| Remove the first `n` values from an `IChunk`. O(1)
+export
+drop : (k : Nat) -> (0 lt : LTE k n) => IChunk n a -> IChunk (n `minus` k) a
+drop k (C o p arr) =
+  -- p        : o + n             <= bufLen
+  -- lt       : k                 <= n
+  -- required : (o + k) + (n - k) <= bufLen
+  let 0 q := cong (o +) (plusMinus k n lt)
+      0 r := plusAssociative o k (n `minus` k)
+   in C (o + k) (rewrite (trans (sym r) q) in p) arr

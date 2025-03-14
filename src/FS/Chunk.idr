@@ -3,6 +3,7 @@ module FS.Chunk
 
 import Data.Array.Core
 import Data.Array.Mutable
+import Data.ByteString
 import FS.Internal.IChunk
 import public Data.Nat
 
@@ -63,6 +64,11 @@ size : Chunk a -> Nat
 size Empty      = 0
 size (Chnk l _) = l
 
+export %inline
+wrap : {n : _} -> IChunk n a -> Chunk a
+wrap {n = S _} c = Chnk _ c
+wrap           _ = Empty
+
 --------------------------------------------------------------------------------
 -- Making Chunks
 --------------------------------------------------------------------------------
@@ -71,34 +77,34 @@ size (Chnk l _) = l
 -- Chunk Concatenation
 --------------------------------------------------------------------------------
 
-||| Size of the chunk after concatenating a SnocList of chunks.
-public export
-SnocSize : SnocList (Chunk a) -> Nat
-SnocSize [<]       = 0
-SnocSize (xs :< x) = SnocSize xs + size x
-
-public export
-ListSize : List (Chunk a) -> Nat
-ListSize = SnocSize . ([<] <><)
-
--- snocConcat implementation
-sconc :
-     (pos         : Nat)
-  -> (cur         : Nat)
-  -> (x           : IChunk m a)
-  -> (arrs        : SnocList (Chunk a))
-  -> {auto 0 lte1 : LTE pos n}
-  -> {auto 0 lte2 : LTE cur m}
-  -> WithMArray n a (IChunk n a)
-sconc pos   0    _   (sx :< Chnk s x) r t = sconc pos s x   sx r t
-sconc pos   0    arr (sx :< Empty)    r t = sconc pos 0 arr sx r t
-sconc (S j) (S k) x   sx            r t =
-  let _ # t := setNat r j (atNat x k) t
-   in sconc j k x sx r t
-sconc _     _     _   _             r t =
-  let res # t := unsafeFreeze r t
-   in Arr 0 reflexive res # t
-
+-- ||| Size of the chunk after concatenating a SnocList of chunks.
+-- public export
+-- SnocSize : SnocList (Chunk a) -> Nat
+-- SnocSize [<]       = 0
+-- SnocSize (xs :< x) = SnocSize xs + size x
+--
+-- public export
+-- ListSize : List (Chunk a) -> Nat
+-- ListSize = SnocSize . ([<] <><)
+--
+-- -- snocConcat implementation
+-- sconc :
+--      (pos         : Nat)
+--   -> (cur         : Nat)
+--   -> (x           : IChunk m a)
+--   -> (arrs        : SnocList (Chunk a))
+--   -> {auto 0 lte1 : LTE pos n}
+--   -> {auto 0 lte2 : LTE cur m}
+--   -> WithMArray n a (IChunk n a)
+-- sconc pos   0    _   (sx :< Chnk s x) r t = sconc pos s x   sx r t
+-- sconc pos   0    arr (sx :< Empty)    r t = sconc pos 0 arr sx r t
+-- sconc (S j) (S k) x   sx            r t =
+--   let _ # t := setNat r j (atNat x k) t
+--    in sconc j k x sx r t
+-- sconc _     _     _   _             r t =
+--   let res # t := unsafeFreeze r t
+--    in Arr 0 reflexive res # t
+--
 -- ||| Concatenate a SnocList of arrays.
 -- |||
 -- ||| This allocates a large enough array in advance, and therefore runs in
@@ -176,44 +182,22 @@ Foldable Chunk where
 --   neutral = Lst []
 
 export %inline
+bytes : ByteString -> Chunk Bits8
+bytes (BS sz bv) = wrap (fromByteVect bv)
+
+export %inline
 singleton : a -> Chunk a
 singleton v = Chnk 1 (fill 1 v)
---
--- export %inline
--- fromList : List a -> Chunk a
--- fromList = Lst
---
--- export %inline
--- fromSnoc : SnocList a -> Chunk a
--- fromSnoc = Lst . (<>> [])
---
--- export %inline
--- Cast (List a) (Chunk a) where cast = Lst
---
--- export %inline
--- Cast (SnocList a) (Chunk a) where cast = Lst . (<>> [])
---
--- export %inline
--- Cast ByteString (Chunk Bits8) where cast = Bts
---
+
+export %inline
+fromList : List a -> Chunk a
+fromList vs = wrap $ chunkL vs
+
 -- export
 -- uncons : Chunk a -> Maybe (a, Chunk a)
 -- uncons (Lst (h::t))        = Just (h, Lst t)
 -- uncons (Bts $ BS (S k) bv) = Just (head bv, Bts (BS k $ tail bv))
 -- uncons _                   = Nothing
---
--- export
--- Eq a => Eq (Chunk a) where
---   Bts xs == Bts ys = xs == ys
---   xs     == ys     = toList xs == toList ys
---
--- export
--- Show a => Show (Chunk a) where
---   showPrec p xs = showCon p "fromList " (show $ toList xs)
---
--- export %inline
--- bytes : ByteString -> Chunk Bits8
--- bytes = Bts
 --
 -- concBytes : SnocList ByteString -> List (Chunk Bits8) -> Chunk Bits8
 -- concBytes sx []      = Bts (fastConcat $ sx <>> [])
