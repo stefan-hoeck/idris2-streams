@@ -241,16 +241,6 @@ Cast (SnocList a) (Chunk a) where
   cast = cast . (<>> [])
 
 --------------------------------------------------------------------------------
--- Generating Chunks
---------------------------------------------------------------------------------
-
-%inline
-freezeChunk : Ix m n -> MArray s n a -> (Chunk a -> b) -> F1 s b
-freezeChunk ix x fun t =
-  let arr # t := AC.unsafeFreeze x t
-   in fun (C (ixToNat ix) (IC 0 (ixLTE _) $ Arr arr)) # t
-
---------------------------------------------------------------------------------
 -- Subchunks
 --------------------------------------------------------------------------------
 
@@ -288,6 +278,12 @@ tail (IC o p arr) = IC (S o) (ltePlusSuccRight p) arr
 -- Concatenating Chunks
 --------------------------------------------------------------------------------
 
+freezeBytes : MBuffer s n -> F1 s (IChunk n Bits8)
+freezeBytes buf t = let c # t := BC.unsafeFreeze buf t in fromIBuffer c # t
+
+freezeVals : MArray s n a -> F1 s (IChunk n a)
+freezeVals buf t = let c # t := AC.unsafeFreeze buf t in fromIArray c # t
+
 export %inline
 copyBytes :
      Inner m Bits8
@@ -297,8 +293,68 @@ copyBytes :
   -> {auto 0 p2 : LTE (dstOffset + len) n}
   -> (r         : MBuffer s n)
   -> F1' s
-copyBytes (Arr x)= icopyToBuf x
-copyBytes (Bts x)= BC.icopy x
+copyBytes (Arr x) = icopyToBuf x
+copyBytes (Bts x) = BC.icopy x
+
+export %inline
+copyVals :
+     Inner m a
+  -> (srcOffset,dstOffset : Nat)
+  -> (len : Nat)
+  -> {auto 0 p1 : LTE (srcOffset + len) m}
+  -> {auto 0 p2 : LTE (dstOffset + len) n}
+  -> (r         : MArray s n a)
+  -> F1' s
+copyVals (Arr x) = AC.icopy x
+copyVals (Bts x) = icopyToArray x
+
+public export
+data SZList : Nat -> Type -> Type where
+  Nil  : SZList 0 a
+  (::) :
+       (c : Chunk a)
+    -> {auto 0 p : IsSucc (size c)}
+    -> SZList n a
+    -> SZList (size c + n) a
+
+concBytes :
+     (pos : Nat)
+  -> (vals : SZList tot Bits8)
+  -> (buf  : MBuffer s (pos+tot))
+  -> F1 s (IChunk (pos+tot) Bits8)
+concBytes pos [] buf t = freezeBytes buf t
+concBytes {tot = sz+rem} pos (C sz (IC o p i) ::vs) buf t =
+  let _ # t := copyBytes i o pos sz {p2 = concatLemma1} buf t
+      0 rw  := plusAssociative pos sz rem
+   in rewrite rw in concBytes (pos+sz) vs (rewrite sym rw in buf) t
+
+concVals :
+     (pos  : Nat)
+  -> (vals : SZList tot a)
+  -> (arr  : MArray s (pos+tot) a)
+  -> F1 s (IChunk (pos+tot) a)
+concVals pos [] arr t = freezeVals arr t
+concVals {tot = sz+rem} pos (C sz (IC o p i) ::vs) arr t =
+  let _ # t := copyVals i o pos sz {p2 = concatLemma1} arr t
+      0 rw  := plusAssociative pos sz rem
+   in rewrite rw in concVals (pos+sz) vs (rewrite sym rw in arr) t
+
+export
+fastConcat : SnocList (Chunk a) -> Chunk a
+fastConcat = go []
+  where
+    bs : {n : _} -> SZList n Bits8 -> SnocList (Chunk Bits8) -> Chunk Bits8
+    bs cs [<]       = C n $ BC.alloc n (concBytes 0 cs)
+    bs cs (sx :< x) = ?bs_rhs_1
+
+    go : {n : _} -> SZList n a -> SnocList (Chunk a) -> Chunk a
+    go cs [<]       = C n $ AC.unsafeAlloc n (concVals 0 cs)
+    go cs (sx :< x) =
+      case x of
+        C 0       _                => go cs sx
+        C k@(S _) (IC _ _ $ Bts _) => bs (x::cs) sx
+        C k@(S _) _                => go (x::cs) sx
+
 
 ||| Concatenate two `Chunk`s. O(n + m).
 export
