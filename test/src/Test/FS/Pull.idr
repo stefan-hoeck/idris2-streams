@@ -49,23 +49,23 @@ prop_unfold : Property
 prop_unfold =
   property $ do
     n <- forAll posNats
-    pullChunks (unfold n next) === map (\x => fromList $ replicate x x) [n..1]
+    pullChunks (unfold n next) === map (\x => chunkL $ replicate x x) [n..1]
 
   where
     next : Nat -> (Chunk Nat, Either () Nat)
     next 0       = (neutral, Left ())
-    next n@(S k) = (fromList $ replicate n n, Right k)
+    next n@(S k) = (chunkL $ replicate n n, Right k)
 
 prop_unfoldMaybe : Property
 prop_unfoldMaybe =
   property $ do
     n <- forAll posNats
-    pullChunks (unfoldMaybe n next) === map (\x => fromList $ replicate x x) [n..1]
+    pullChunks (unfoldMaybe n next) === map (\x => chunkL $ replicate x x) [n..1]
 
   where
     next : Nat -> (Chunk Nat, Maybe Nat)
     next 0       = (neutral, Nothing)
-    next n@(S k) = (fromList $ replicate n n, Just k)
+    next n@(S k) = (chunkL $ replicate n n, Just k)
 
 prop_unfold1 : Property
 prop_unfold1 =
@@ -87,8 +87,8 @@ prop_unfold1AsChunks =
     next 0       = Left ()
     next n@(S k) = Right (n*n,k)
 
-prop_unfold1Maybe : Property
-prop_unfold1Maybe =
+prop_unfoldMaybe1 : Property
+prop_unfoldMaybe1 =
   property $ do
     n <- forAll posNats
     pullList (unfoldMaybe1 n next) === map (\x => x * x) [n..1]

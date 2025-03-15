@@ -20,7 +20,7 @@ bytes = anyBits8
 export
 byteChunks_ : Gen (List Bits8) -> Gen (Chunk Bits8)
 byteChunks_ gen =
-  choice [ map fromList gen, map (Chunk.bytes . pack) gen ]
+  choice [ map chunkL gen, map (Chunk.bytes . pack) gen ]
 
 export
 byteChunks : Gen (Chunk Bits8)

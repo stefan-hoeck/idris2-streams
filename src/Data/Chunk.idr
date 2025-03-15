@@ -209,6 +209,15 @@ splitAt ch@(C sz arr) n with (n < sz) proof eq
 ||| Used for implementing `FS.Pull.takeWhileJust`
 export
 takeWhileJustImpl : Chunk (Maybe o) -> (Chunk o,Chunk $ Maybe o)
+takeWhileJustImpl (C n ic) = go [<] n
+  where
+    go : SnocList o -> (k : Nat) -> (x : Ix k n) => (Chunk o, Chunk $ Maybe o)
+    go sx 0     = (cast sx, empty)
+    go sx (S k) =
+      case ix ic k of
+        Just v  => go (sx:<v) k
+        Nothing => (cast sx, C _ $ dropIx x ic)
+
 -- takeWhileJustImpl sx []        = (cast sx, [])
 -- takeWhileJustImpl sx (x :: xs) =
 --   case x of
@@ -221,39 +230,45 @@ takeWhileJustImpl : Chunk (Maybe o) -> (Chunk o,Chunk $ Maybe o)
 -- -- dropWhileImpl f []        = []
 -- -- dropWhileImpl f (x :: xs) = if f x then dropWhileImpl f xs else x::xs
 
-||| Used for implementing `FS.Pull.find`
+export
+break : (o -> Bool) -> Chunk o -> (Chunk o,Chunk o)
+break pred c@(C sz ic) = go sz
+  where
+    go : (n : Nat) -> (x : Ix n sz) => (Chunk o, Chunk o)
+    go 0     = (c, empty)
+    go (S k) =
+      case pred (ix ic k) of
+        True  => (C _ $ takeIx x ic, C _ $ dropIx x ic)
+        False => go k
+
+||| Used for implementing `FS.Pull.find`: Returns the first value
+||| for which the given predicate holds, plus the remainder of the chunk.
 export
 find : (o -> Bool) -> Chunk o -> Maybe (o,Chunk o)
--- find f (Bts bs) =
---   case break f bs of
---     (_, BS (S k) v) => Just (head v, Bts (BS k $ tail v))
---     _               => Nothing
--- find f (Lst vs) = go vs
---   where
---     go : List o -> Maybe (o,Chunk o)
---     go []        = Nothing
---     go (x :: xs) = if f x then Just (x, Lst xs) else go xs
---
---
--- chunkedGo :
---      SnocList (Chunk a)
---   -> SnocList a
---   -> Nat
---   -> Nat
---   -> List a
---   -> List (Chunk a)
--- chunkedGo sxs sx _  _     []     = sxs <>> [cast sx]
--- chunkedGo sxs sx sz 0     (h::t) = chunkedGo (sxs :< (cast sx)) [<h] sz sz t
--- chunkedGo sxs sx sz (S m) (h::t) = chunkedGo sxs (sx:<h) sz m t
---
--- ||| Groups a list of values into chunks of size `n`.
--- |||
--- ||| Only the last list might be shorter.
--- export
--- chunked : (n : Nat) -> (0 p : IsSucc n) => List a -> List (Chunk a)
--- chunked _      []     = []
--- chunked (S sz) (h::t) = chunkedGo [<] [<h] sz sz t
---
+find f c =
+  case break f c of
+    (_, C (S k) ic) => Just (head ic, C k $ tail ic)
+    _               => Nothing
+
+chunkedGo :
+     SnocList (Chunk a)
+  -> SnocList a
+  -> Nat
+  -> Nat
+  -> List a
+  -> List (Chunk a)
+chunkedGo sxs sx _  _     []     = sxs <>> [cast sx]
+chunkedGo sxs sx sz 0     (h::t) = chunkedGo (sxs :< (cast sx)) [<h] sz sz t
+chunkedGo sxs sx sz (S m) (h::t) = chunkedGo sxs (sx:<h) sz m t
+
+||| Groups a list of values into chunks of size `n`.
+|||
+||| Only the last list might be shorter.
+export
+chunked : (n : Nat) -> (0 p : IsSucc n) => List a -> List (Chunk a)
+chunked _      []     = []
+chunked (S sz) (h::t) = chunkedGo [<] [<h] sz sz t
+
 -- export
 -- mapAccum : SnocList p -> (s -> o -> (s,p)) -> s -> List o -> (List p,s)
 -- mapAccum sx f s1 []        = (sx <>> [], s1)

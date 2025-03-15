@@ -2,8 +2,8 @@ module FS.Stream
 
 import public Control.Monad.MCancel
 import public Control.Monad.Resource
+import public Data.Chunk
 import public Data.Linear.ELift1
-import public FS.Chunk
 import public FS.Scope
 
 import Data.Linear.Deferred

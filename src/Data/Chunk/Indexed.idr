@@ -189,6 +189,10 @@ export
   toList = ontoList [] n
   null _ = n == Z
 
+export
+{n : _} -> Show a => Show (IChunk n a) where
+  showPrec p ic = showCon p "ichunkL" (showArg $ toList ic)
+
 --------------------------------------------------------------------------------
 -- Non-indexed Chunks
 --------------------------------------------------------------------------------
@@ -210,6 +214,10 @@ Eq a => Eq (Chunk a) where
 export
 Ord a => Ord (Chunk a) where
   compare (C l1 c1) (C l2 c2) = hcomp c1 c2
+
+export
+Show a => Show (Chunk a) where
+  showPrec p (C sz vs) = showCon p "C" (showArg sz ++ showArg vs)
 
 export
 Functor Chunk where
@@ -248,9 +256,13 @@ freezeChunk ix x fun t =
 
 ||| Return an `IChunk` with the first `n` values of
 ||| the input string. O(1)
-export
+export %inline
 take : (0 k : Nat) -> (0 lt : LTE k n) => IChunk n a -> IChunk k a
 take k (IC o p arr) = IC o (transitive (ltePlusRight o lt) p) arr
+
+export %inline
+takeIx : (x : Ix m n) -> IChunk n a -> IChunk (ixToNat x) a
+takeIx x = take (ixToNat x) @{ixLTE x}
 
 ||| Remove the first `n` values from an `IChunk`. O(1)
 export %inline
@@ -262,6 +274,10 @@ drop k (IC o p arr) =
   let 0 q := cong (o +) (plusMinus k n lt)
       0 r := plusAssociative o k (n `minus` k)
    in IC (o + k) (rewrite (trans (sym r) q) in p) arr
+
+export %inline
+dropIx : (x : Ix m n) -> IChunk n a -> IChunk (n `minus` ixToNat x) a
+dropIx x = drop (ixToNat x) @{ixLTE x}
 
 ||| Drop the first value from a non-empty chunk. O(1)
 export %inline
