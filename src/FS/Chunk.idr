@@ -139,6 +139,20 @@ Split (List1 a) where
   splitAt 0     _       = Naught
   splitAt (S k) (h:::t) = splitAtList h [<] k t
 
+--------------------------------------------------------------------------------
+-- Break
+--------------------------------------------------------------------------------
+
+public export
+data BreakRes : Type -> Type where
+  Broke : (pre, post : c) -> BreakRes c
+  First : BreakRes c
+  None  : BreakRes c
+
+public export
+interface Break (0 c,o : Type) | c where
+  breakImpl : (o -> Bool) -> c -> BreakRes c
+
 -- ||| Used for implementing `FS.Pull.takeWhile` and `FS.Pull.takeThrough`
 -- export
 -- takeWhileImpl : Bool -> SnocList o -> (o -> Bool) -> List o -> Maybe (List o,List o)
