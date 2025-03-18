@@ -3,7 +3,7 @@ module FS.Concurrent.Signal
 import Data.Linear.Deferred
 import Data.Linear.Ref1
 
-import FS.Stream
+import FS.Pull
 
 import IO.Async
 
@@ -109,10 +109,10 @@ continuous = repeat . eval . get
 |||       might be lost.
 export %inline
 discrete : SignalRef a -> Stream (Async e) es a
-discrete s = unfoldEvalST 0 (map Just . next s)
+discrete s = unfoldEval 0 (map (uncurry Chunk). next s)
 
 ||| Blocks the fiber and observes the given signal until the given
 ||| predicate returns `True`.
-export
-until : SignalRef a -> (a -> Bool) -> Async e es ()
-until ref pred = discrete ref |> any pred |> drain |> run
+export covering
+until : SignalRef a -> (a -> Bool) -> Async e [] ()
+until ref pred = discrete ref |> any pred |> ignore |> mpull

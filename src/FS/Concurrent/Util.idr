@@ -2,7 +2,6 @@ module FS.Concurrent.Util
 
 import Data.Linear.Deferred
 import FS.Pull
-import FS.Stream
 import IO.Async
 
 %default total
@@ -21,12 +20,14 @@ putErr def _         = pure ()
 
 ||| Runs the given pull in a new child scope and interrupts
 ||| its evaluation once the given `Deferred` is completed.
+-- TODO: We should add support for a deferred result plus error
+--       handling here.
 export
-interruptPull :
+interruptOn :
      Deferred World a
-  -> Pull_ c (Async e) o es ()
-  -> Pull_ c (Async e) o es ()
-interruptPull def p = OnIntr (OScope (I def) p) (pure ())
+  -> Stream (Async e) es o
+  -> Stream (Async e) es o
+interruptOn def p = OnIntr (OScope (I def) p) (pure ())
 
 ||| Concurrently runs the given stream until it either terminates or
 ||| is interrupted by `check`.
@@ -34,6 +35,8 @@ interruptPull def p = OnIntr (OScope (I def) p) (pure ())
 ||| This is a low-level utility used to implement the combinators in this
 ||| module. It is exported, because it might be useful when
 ||| implementing other combinators,
+-- TODO: We should add support for a deferred result plus error
+--       handling here.
 export covering
 parrunCase :
      (sc      : Scope (Async e))
@@ -41,8 +44,8 @@ parrunCase :
   -> (finally : Outcome fs () -> Async e [] ())
   -> EmptyStream (Async e) fs
   -> Async e es (Fiber [] ())
-parrunCase sc check finally (S p) =
-  start $ ignore $ guaranteeCase (runIn sc $ interruptPull check p) $ \case
+parrunCase sc check finally p =
+  start $ ignore $ guaranteeCase (pullIn sc $ interruptOn check p) $ \case
     Succeeded res => finally res
     Canceled      => finally Canceled
     Error err impossible
@@ -53,6 +56,8 @@ parrunCase sc check finally (S p) =
 ||| This is a low-level utility used to implement the combinators in this
 ||| module. It is exported, because it might be useful when
 ||| implementing other combinators,
+-- TODO: We should add support for a deferred result plus error
+--       handling here.
 export covering %inline
 parrun :
      (sc      : Scope (Async e))
