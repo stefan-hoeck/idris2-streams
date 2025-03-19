@@ -98,7 +98,7 @@ parameters {0    es  : List Type}
   export
   deepEntries : (pth : Path p) -> AsyncStream e es (Entry p)
   deepEntries pth =
-    assert_total $ unconsBind (entries pth) $ \e =>
+    assert_total $ flatMapC (entries pth) $ \e =>
       case e.type of
         Directory => emit e >> deepEntries e.path
         _         => emit e

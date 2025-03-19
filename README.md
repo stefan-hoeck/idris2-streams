@@ -38,7 +38,7 @@ a monad, so that we can get streams of streams, which - just like with
 in sequence. Here's a very simple example:
 
 ```idris
-example : EmptyPull f es Nat
+example : Stream f es Nat
 example = iterate {c = List Nat} Z S |> takeWhile (< 10_000_000) |> sum
 ```
 
@@ -57,7 +57,7 @@ logging the generated values to `stdout`:
 ```idris
 covering
 runExample : IO ()
-runExample = runProg (example >>= prntLn)
+runExample = runProg (foreach prntLn example)
 ```
 
 If you run the above (for instance, at the REPL by invoking `:exec runExample`),
@@ -93,7 +93,7 @@ fahrenheit : Prog ()
 fahrenheit =
      readBytes "resources/fahrenheit.txt"
   |> lines
-  |> filterNotEl (\x => null (trim x) || isPrefixOf "//" x)
+  |> filterNot (\x => null (trim x) || isPrefixOf "//" x)
   |> mapEl (fromString . show . toCelsius)
   |> unlines
   |> writeTo Stdout
@@ -125,13 +125,13 @@ as command-line arguments) and emit their content as a stream of
 -- stream thousands of files.
 example2 : Prog ()
 example2 =
-     tail args
+     tailC args
   |> observe stdoutLn
-  |> (>>= readBytes)
+  |> bindC readBytes
   |> lines
   |> map size
   |> zipWithIndex
-  |> fold (Z,Z) max
+  |> fold max (Z,Z)
   |> map (fromString . show)
   |> unlines
   |> writeTo Stdout

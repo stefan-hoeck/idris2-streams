@@ -159,6 +159,10 @@ foreachEl f p =
     Left x      => pure x
     Right (v,p) => exec (f v) >> foreachEl f p
 
+--------------------------------------------------------------------------------
+-- Maps and Filters
+--------------------------------------------------------------------------------
+
 ||| Element-wise filtering of a stream of chunks.
 export
 filter : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es r
@@ -172,9 +176,18 @@ export %inline
 filterNot : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es r
 filterNot pred = filter (not . pred)
 
+||| Maps a function over all elements emitted by a pull.
 export %inline
-mapEl : (o -> p) -> Pull f (List o) es r -> Pull f (List p) es r
+mapEl : Functor t => (o -> p) -> Pull f (t o) es r -> Pull f (t p) es r
 mapEl = mapC . map
+
+||| Maps a partial function over all elements emitted by a pull.
+export %inline
+mapMaybe : (o -> Maybe p) -> Pull f (List o) es r -> Pull f (List p) es r
+mapMaybe f =
+  mapMaybeC $ \vs => case mapMaybe f vs of
+    [] => Nothing
+    ws => Just ws
 
 --------------------------------------------------------------------------------
 -- Folds
@@ -196,13 +209,54 @@ export %inline
 any : Foldable t => (o -> Bool) -> Stream f es (t o) -> Stream f es Bool
 any pred = anyC (any pred)
 
+||| Emits the sum over all elements emitted by a `Pull`.
 export %inline
 sum : Foldable t => Num o => Pull f (t o) es r -> Pull f o es r
 sum = fold (+) 0
 
+||| Emits the number of elements emitted by a `Pull`.
 export %inline
 count : Foldable t => Pull f (t o) es r -> Pull f Nat es r
 count = fold (const . S) 0
+
+--------------------------------------------------------------------------------
+-- Scans
+--------------------------------------------------------------------------------
+
+||| Computes a stateful running total over all elements emitted by a
+||| pull.
+export
+scan : st -> (st -> o -> (p,st)) -> Pull f (List o) es r -> Pull f (List p) es r
+scan ini f = scanC ini (go [<])
+  where
+    go : SnocList p -> st -> List o -> (List p, st)
+    go sx cur []        = (sx <>> [], cur)
+    go sx cur (x :: xs) = let (y,c2) := f cur x in go (sx:<y) c2 xs
+
+||| Zips the input with a running total according to `s`, up to but
+||| not including the current element. Thus the initial
+||| `vp` value is the first emitted to the output:
+export
+zipWithScan :
+     p
+  -> (p -> o -> p)
+  -> Pull f (List o) es r
+  -> Pull f (List (o,p)) es r
+zipWithScan vp fun =
+  scan vp $ \vp1,vo => let vp2 := fun vp1 vo in ((vo, vp1),vp2)
+
+||| Pairs each element in the stream with its 0-based index.
+export %inline
+zipWithIndex : Pull f (List o) es r -> Pull f (List (o,Nat)) es r
+zipWithIndex = zipWithScan 0 (\n,_ => S n)
+
+||| Like `zipWithScan` but the running total is including the current element.
+export
+zipWithScan1 : p -> (p -> o -> p) -> Stream f es o -> Stream f es (o,p)
+-- zipWithScan1 vp fun =
+--   mapAccumulate vp $ \vp1,vo =>
+--     let vp2 := fun vp1 vo
+--      in (vp2, (vo, vp2))
 
 --------------------------------------------------------------------------------
 -- List Implementation

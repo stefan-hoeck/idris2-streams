@@ -398,6 +398,14 @@ foldMapC f = foldC (\v,el => v <+> f el) neutral
 -- Scans
 --------------------------------------------------------------------------------
 
+||| Runs a stateful computation across all chunks of data.
+export
+scanC : s -> (s -> o -> (p,s)) -> Pull f o es r -> Pull f p es r
+scanC s1 f p =
+  assert_total $ uncons p >>= \case
+    Left res    => pure res
+    Right (v,q) => let (w,s2) := f s1 v in emit w >> scanC s2 f q
+
 ||| General stateful conversion of a `Pull`s emit.
 |||
 ||| Aborts as soon as the given accumulator function returns `Nothing`
@@ -410,11 +418,6 @@ scanMaybe s1 f p =
       Left _      => pure s1
       Right (v,p) => let (w,s2) := g v in emit w >> scanMaybe s2 f p
 
-||| Like `scanMaybe` but will transform the whole emit.
-export %inline
-scan : s -> (s -> o -> (p,s)) -> Stream f es o -> Pull f p es s
-scan s1 f = scanMaybe s1 (Just . f)
-
 ||| Like `scan` but will possibly also emit the final state.
 export
 scanFull :
@@ -424,7 +427,7 @@ scanFull :
   -> Stream f es o
   -> Stream f es p
 scanFull s1 f last p = do
-  v <- scan s1 f p
+  v <- scanMaybe s1 (Just . f) p
   case last v of
     Just rem => emit rem
     Nothing  => pure ()
