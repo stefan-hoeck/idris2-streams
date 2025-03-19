@@ -23,6 +23,17 @@ emits : List o -> Stream f es o
 emits []     = pure ()
 emits (h::t) = emit h >> emits t
 
+||| Emits a list of values as a single chunk.
+export
+emitList : List o -> Stream f es (List o)
+emitList [] = pure ()
+emitList vs = emit vs
+
+||| Utility to emit a single list chunk from a snoc list.
+export %inline
+emitSnoc : SnocList o -> Stream f es (List o)
+emitSnoc = emitList . (<>> [])
+
 ||| Emits a single chunk of output generated from an effectful
 ||| computation.
 export %inline
@@ -98,6 +109,43 @@ cons vs p = Output vs >> p
 export %inline
 uncons : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
 uncons = Uncons
+
+public export
+data BreakRes : (c : Type) -> Type where
+  Broken : (pre, post : c) -> BreakRes c
+  NoPre  : (post : c) -> BreakRes c
+  NoPost : (pre  : c) -> BreakRes c
+  Keep   : c -> BreakRes c
+
+||| Uses the given breaking function to break the pull into
+||| prefix of emitted chunks and a suffix that is returned as
+||| result.
+export
+breakPull : (o -> BreakRes o) -> Pull f o es r -> Pull f o es (Pull f o es r)
+breakPull g p =
+  assert_total $ uncons p >>= \case
+    Left r      => pure (pure r)
+    Right (v,q) => case g v of
+      Broken pre post => emit pre $> cons post q
+      NoPre      post => pure $ cons post q
+      NoPost pre      => emit pre $> q
+      Keep w          => emit w >> breakPull g q
+
+||| Uses the given breaking function to break the pull into
+||| a stream of lists of values.
+export
+splitPull : (o -> BreakRes p) -> Pull f o es r -> Pull f (List p) es r
+splitPull g = go [<]
+  where
+    go : SnocList p -> Pull f o es r -> Pull f (List p) es r
+    go sp pl =
+      assert_total $ uncons pl >>= \case
+        Left r      => emitSnoc sp $> r
+        Right (v,q) => case g v of
+          Broken pre post => emitSnoc (sp :< pre) >> go [<post] q
+          NoPre      post => emitSnoc sp >> go [<post] q
+          NoPost pre      => emitSnoc (sp :< pre) >> go [<] q
+          Keep w          => go (sp :< w) q
 
 ||| Emits only the first `n` chunks of values of a `Stream`.
 export
@@ -263,6 +311,14 @@ endWithNothing s = mapC Just s >>= \res => emit Nothing $> res
 --------------------------------------------------------------------------------
 -- Folds
 --------------------------------------------------------------------------------
+
+||| Returns the first output of this stream.
+export
+firstOr : Lazy o -> Stream f es o -> Pull f p es o
+firstOr dflt s =
+  newScope $ uncons s >>= \case
+    Left _      => pure dflt
+    Right (v,_) => pure v
 
 ||| Folds the emit of a pull using an initial value and binary operator.
 |||

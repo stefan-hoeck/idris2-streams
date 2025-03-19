@@ -2,6 +2,7 @@
 module FS.Chunk
 
 import FS.Pull
+import Data.List
 import Data.Nat
 
 %default total
@@ -63,12 +64,13 @@ data SplitRes : Type -> Type where
 ||| element type `Bits8`.
 public export
 interface Chunk (0 c,o : Type) | c where
-  unfoldChunk : ChunkSize => (s ->  Either r (o,s)) -> s -> UnfoldRes r s c
-  isEmpty      : c -> Bool
-  unconsChunk  : c -> Maybe (o, c)
-  splitChunkAt : Nat -> c -> SplitRes c
-  breakChunk   : (keepHit : Bool) -> (o -> Bool) -> c -> BreakRes c
-  filterChunk  : (o -> Bool) -> c -> c
+  unfoldChunk    : ChunkSize => (s ->  Either r (o,s)) -> s -> UnfoldRes r s c
+  replicateChunk : ChunkSize => o -> c
+  isEmpty        : c -> Bool
+  unconsChunk    : c -> Maybe (o, c)
+  splitChunkAt   : Nat -> c -> SplitRes c
+  breakChunk     : (keepHit : Bool) -> (o -> Bool) -> c -> BreakRes c
+  filterChunk    : (o -> Bool) -> c -> c
 
 --------------------------------------------------------------------------------
 -- Utilities
@@ -76,26 +78,24 @@ interface Chunk (0 c,o : Type) | c where
 
 ||| Like `unfold` but generates chunks of values of up to the given size.
 export %inline
-unfoldEl : ChunkSize => Chunk c o => s -> (s -> Either r (o,s)) -> Pull f c es r
-unfoldEl init g = unfold init (unfoldChunk g)
+unfold : ChunkSize => Chunk c o => s -> (s -> Either r (o,s)) -> Pull f c es r
+unfold init g = unfoldC init (unfoldChunk g)
 
 ||| Like `fill` but generates chunks of values of up to the given size.
 export
 fill : ChunkSize => Chunk c o => o -> Pull f c es ()
-fill v =
-  let chunk := unfoldChunk (\_ => Right (v,())) ()
-   in unfold () (const chunk)
+fill v = fillC (replicateChunk v)
 
 ||| Like `iterate` but generates chunks of values of up to the given size.
 export
 iterate : ChunkSize => Chunk c o => o -> (o -> o) -> Stream f es c
-iterate v f = unfoldEl v (\x => Right (x, f x))
+iterate v f = unfold v (\x => Right (x, f x))
 
 ||| Like `replicate` but generates chunks of values of up to the given size.
 export
 replicate : ChunkSize => Chunk c o => Nat -> o -> Stream f es c
 replicate n v =
-  unfoldEl n $ \case
+  unfold n $ \case
     0   => Left ()
     S k => Right (v,k)
 
@@ -119,7 +119,6 @@ unconsEl p =
 ||| the remainder.
 export %inline
 break : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es (Pull f c es r)
-break = breakPull . breakChunk False
 
 ||| Emits elements until the given predicate returns `False`.
 export %inline
@@ -182,32 +181,27 @@ mapEl = mapC . map
 --------------------------------------------------------------------------------
 
 export %inline
-pfold : Foldable t => (p -> o -> p) -> p -> Pull f (t o) es r -> Pull f q es (p,r)
-pfold g = pfoldC (foldl g)
-
-||| Folds all input using an initial value and binary operator
-export %inline
-fold : Foldable t => (p -> o -> p) -> p -> Stream f es (t o) -> Pull f q es p
-fold f v = map fst . pfold f v
+fold : Foldable t => (p -> o -> p) -> p -> Pull f (t o) es r -> Pull f p es r
+fold g = foldC (foldl g)
 
 ||| Returns `True` if all emitted values of the given stream fulfill
 ||| the given predicate
 export %inline
-all : Foldable t => (o -> Bool) -> Stream f es (t o) -> Pull f q es Bool
+all : Foldable t => (o -> Bool) -> Stream f es (t o) -> Stream f es Bool
 all pred = allC (all pred)
 
 ||| Returns `True` if any of the emitted values of the given stream fulfills
 ||| the given predicate
 export %inline
-any : Foldable t => (o -> Bool) -> Stream f es (t o) -> Pull f q es Bool
+any : Foldable t => (o -> Bool) -> Stream f es (t o) -> Stream f es Bool
 any pred = anyC (any pred)
 
 export %inline
-sum : Foldable t => Num o => Stream f es (t o) -> Pull f q es o
+sum : Foldable t => Num o => Pull f (t o) es r -> Pull f o es r
 sum = fold (+) 0
 
 export %inline
-count : Foldable t => Stream f es (t o) -> Pull f q es Nat
+count : Foldable t => Pull f (t o) es r -> Pull f Nat es r
 count = fold (const . S) 0
 
 --------------------------------------------------------------------------------
@@ -232,7 +226,7 @@ splitAtList sx n     []     = All n
 splitAtList sx 0     xs     = Middle (sx <>> []) xs
 
 breakList : SnocList a -> Bool -> (a -> Bool) -> List a -> BreakRes (List a)
-breakList sx b f []        = None
+breakList sx b f []        = Keep (sx <>> [])
 breakList sx b f (x :: xs) =
   case f x of
     True => case b of
@@ -250,6 +244,8 @@ Chunk (List a) a where
     case f x of
       Left res     => Done res
       Right (v,x2) => unfoldList [<v] n f x2
+
+  replicateChunk @{CS n} = List.replicate n
 
   isEmpty [] = True
   isEmpty _  = False
