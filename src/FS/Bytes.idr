@@ -16,7 +16,7 @@ import FS.Stream
 ||| byte vector. See also `lines`.
 export
 unlines : Pull f (List ByteString) es r -> Pull f ByteString es r
-unlines = mapOutput (\cs => fastConcat $ cs >>= \b => [b,nl])
+unlines = mapC (\cs => fastConcat $ cs >>= \b => [b,nl])
 
 ||| Breaks the bytes emitted by a byte stream along unix newline
 ||| characters (`0x0a`).
@@ -44,7 +44,7 @@ namespace UTF8
   |||       `UTF8.decode`
   export %inline
   decode : Stream f es ByteString -> Stream f es String
-  decode = mapOutput toString . UTF8.chunks
+  decode = mapC toString . UTF8.chunks
 
   ||| Converts a stream of strings to UTF-8-encoded byte strings.
   |||
@@ -52,4 +52,4 @@ namespace UTF8
   |||       `UTF8.encode`
   export %inline
   encode : Stream f es String -> Stream f es ByteString
-  encode = mapOutput fromString
+  encode = mapC fromString

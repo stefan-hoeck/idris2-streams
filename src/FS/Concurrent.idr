@@ -158,7 +158,7 @@ merge ss  = Prelude.do
 export
 mergeHaltL : (s1,s2 : AsyncStream e es o) -> AsyncStream e es o
 mergeHaltL s1 s2 =
-  takeWhileJust $ merge [endWithNothing s1, mapOutput Just s2]
+  takeWhileJust $ merge [endWithNothing s1, mapC Just s2]
 
 ||| Runs the given streams in parallel and nondeterministically interleaves
 ||| their output.

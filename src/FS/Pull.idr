@@ -199,18 +199,19 @@ export %inline
 exec : f es r -> Pull f o es r
 exec = Exec
 
-||| Emits a single value of output
+||| Emits a single chunk of output
 export %inline
 emit : o -> Stream f es o
 emit = Output
 
-||| Emits a single value of output
+||| Emits a list of chunks.
 export %inline
 emits : List o -> Stream f es o
 emits []     = pure ()
 emits (h::t) = emit h >> emits t
 
-||| Emits a single value of output
+||| Emits a single chunk of output generated from an effectful
+||| computation.
 export %inline
 eval : f es o -> Stream f es o
 eval act = Exec act >>= emit
@@ -248,26 +249,26 @@ unfoldEvalMaybe act =
 
 ||| Infinitely produces chunks of values of the given size
 export
-fill : o -> Pull f o es ()
-fill v = assert_total $ emit v >> fill v
+fillC : o -> Pull f o es ()
+fillC v = assert_total $ emit v >> fillC v
 
 ||| An infinite stream of values of type `o` where
 ||| the next value is built from the previous one by
 ||| applying the given function.
 export
-iterate : o -> (o -> o) -> Stream f es o
-iterate v f = unfold v (\x => More x $ f x)
+iterateC : o -> (o -> o) -> Stream f es o
+iterateC v f = unfold v (\x => More x $ f x)
 
 ||| Infinitely cycles through the given `Pull`
 export
 repeat : Stream f es o -> Stream f es o
 repeat v = assert_total $ v >> repeat v
 
-||| Produces the given value `n` times as chunks of the given size.
+||| Produces the given chunk of value `n` times.
 export
-replicate : Nat -> o -> Stream f es o
-replicate 0     _ = pure ()
-replicate (S k) v = emit v >> replicate k v
+replicateC : Nat -> o -> Stream f es o
+replicateC 0     _ = pure ()
+replicateC (S k) v = emit v >> replicateC k v
 
 --------------------------------------------------------------------------------
 -- Combinators
@@ -295,40 +296,40 @@ export %inline
 uncons : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
 uncons = Uncons
 
-||| Emits only the first `n` values of a `Stream`.
+||| Emits only the first `n` chunks of values of a `Stream`.
 -- TODO: Fix and check scoping
 export
-take : Nat -> Stream f es o -> Stream f es o
-take 0     _ = pure ()
-take (S k) p =
+takeC : Nat -> Stream f es o -> Stream f es o
+takeC 0     _ = pure ()
+takeC (S k) p =
   uncons p >>= \case
     Left _      => pure ()
-    Right (v,q) => emit v >> take k q
+    Right (v,q) => emit v >> takeC k q
 
 ||| Discards the first `n` values of a `Stream`, returning the
 ||| remainder.
 export
-drop : Nat -> Pull f o es r -> Pull f o es r
-drop 0     p = p
-drop (S k) p =
+dropC : Nat -> Pull f o es r -> Pull f o es r
+dropC 0     p = p
+dropC (S k) p =
   uncons p >>= \case
     Left v      => pure v
-    Right (v,q) => drop k q
+    Right (v,q) => dropC k q
 
 ||| Only keeps the first element of the input.
 export %inline
-head : Stream f es o -> Stream f es o
-head = take 1
+headC : Stream f es o -> Stream f es o
+headC = takeC 1
 
 ||| Drops the first element of the input.
 export %inline
-tail : Stream f es o -> Stream f es o
-tail = drop 1
+tailC : Stream f es o -> Stream f es o
+tailC = dropC 1
 
 ||| Like `uncons` but does not consume the chunk
 export
-peek : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
-peek p =
+peekC : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
+peekC p =
   uncons p >>= \case
     Left v       => pure (Left v)
     Right (vs,q) => pure $ Right (vs, cons vs q)
@@ -359,13 +360,13 @@ takeWhile_ tf pred p =
 ||| Emits values until the given predicate returns `False`,
 ||| returning the remainder of the `Pull`.
 export %inline
-takeWhile : (o -> Bool) -> Stream f es o -> Stream f es o
-takeWhile = takeWhile_ False
+takeWhileC : (o -> Bool) -> Stream f es o -> Stream f es o
+takeWhileC = takeWhile_ False
 
 ||| Like `takeWhile` but also includes the first failure.
 export %inline
-takeThrough : (o -> Bool) -> Stream f es o -> Stream f es o
-takeThrough = takeWhile_ True
+takeThroughC : (o -> Bool) -> Stream f es o -> Stream f es o
+takeThroughC = takeWhile_ True
 
 ||| Emits values until the given pull emits a `Nothing`.
 export
@@ -389,30 +390,30 @@ dropWhile_ df pred p =
 ||| Drops values from a stream while the given predicate returns `True`,
 ||| returning the remainder of the stream (if any).
 export %inline
-dropWhile : (o -> Bool) -> Pull f o es r -> Pull f o es r
-dropWhile = dropWhile_ False
+dropWhileC : (o -> Bool) -> Pull f o es r -> Pull f o es r
+dropWhileC = dropWhile_ False
 
 ||| Like `dropWhile` but also drops the first value where
 ||| the predicate returns `False`.
 export %inline
-dropThrough : (o -> Bool) -> Pull f o es r -> Pull f o es r
-dropThrough = dropWhile_ True
+dropThroughC : (o -> Bool) -> Pull f o es r -> Pull f o es r
+dropThroughC = dropWhile_ True
 
 ||| Filters the emit of a `Pull` emitting only the
 ||| values that fulfill the given predicate
 export
-mapMaybe : (o -> Maybe p) -> Pull f o es r -> Pull f p es r
-mapMaybe f p =
+mapMaybeC : (o -> Maybe p) -> Pull f o es r -> Pull f p es r
+mapMaybeC f p =
   assert_total $ uncons p >>= \case
     Left x      => pure x
     Right (v,q) => case f v of
-      Just w  => emit w >> mapMaybe f q
-      Nothing => mapMaybe f q
+      Just w  => emit w >> mapMaybeC f q
+      Nothing => mapMaybeC f q
 
 ||| Chunk-wise maps the emit of a `Pull`
 export %inline
-mapOutput : (o -> p) -> Pull f o es r -> Pull f p es r
-mapOutput f = mapMaybe (Just . f)
+mapC : (o -> p) -> Pull f o es r -> Pull f p es r
+mapC f = mapMaybeC (Just . f)
 
 ||| Chunk-wise effectful mapping of the emit of a `Pull`
 export
@@ -451,7 +452,7 @@ filter pred p =
 ||| marks its end with a `Nothing`.
 export
 endWithNothing : Pull f o es r -> Pull f (Maybe o) es r
-endWithNothing s = mapOutput Just s >>= \res => emit Nothing $> res
+endWithNothing s = mapC Just s >>= \res => emit Nothing $> res
 
 --------------------------------------------------------------------------------
 -- Folds
@@ -459,46 +460,46 @@ endWithNothing s = mapOutput Just s >>= \res => emit Nothing $> res
 
 ||| Folds the emit of a pull using an initial value and binary operator.
 export
-pfold : p -> (p -> o -> p) -> Pull f o es r -> Pull f q es (p,r)
-pfold v g s =
+pfoldC : (p -> o -> p) -> p -> Pull f o es r -> Pull f q es (p,r)
+pfoldC g v s =
   assert_total $ uncons s >>= \case
     Left res      => pure (v,res)
-    Right (vs,s2) => pfold (g v vs) g s2
+    Right (vs,s2) => pfoldC g (g v vs) s2
 
 ||| Folds all input using an initial value and binary operator
 export %inline
-fold : p -> (p -> o -> p) -> Stream f es o -> Pull f q es p
-fold v f = map fst . pfold v f
+foldC : (p -> o -> p) -> p -> Stream f es o -> Pull f q es p
+foldC f v = map fst . pfoldC f v
 
 ||| Returns `True` if all emitted values of the given stream fulfill
 ||| the given predicate
 export
-all : (o -> Bool) -> Stream f es o -> Pull f q es Bool
-all pred p =
+allC : (o -> Bool) -> Stream f es o -> Pull f q es Bool
+allC pred p =
   assert_total $ uncons p >>= \case
     Left _ => pure True
     Right (vs,q) => case pred vs of
-      True  => all pred q
+      True  => allC pred q
       False => pure False
 
 ||| Returns `True` if any of the emitted values of the given stream fulfills
 ||| the given predicate
 export
-any : (o -> Bool) -> Pull f o es () -> Pull f q es Bool
-any pred p =
+anyC : (o -> Bool) -> Pull f o es () -> Pull f q es Bool
+anyC pred p =
   assert_total $ uncons p >>= \case
     Left _ => pure False
     Right (vs,q) => case pred vs of
-      False  => any pred q
+      False  => anyC pred q
       True   => pure True
 
 export %inline
-sum : Num o => Stream f es o -> Pull f q es o
-sum = fold 0 (+)
+sumC : Num o => Stream f es o -> Pull f q es o
+sumC = foldC (+) 0
 
 export %inline
-count : Stream f es o -> Pull f q es Nat
-count = fold 0 (const . S)
+countC : Stream f es o -> Pull f q es Nat
+countC = foldC (const . S) 0
 
 ||| General stateful conversion of a `Pull`s emit.
 |||
@@ -686,13 +687,13 @@ unconsBind p g =
 
 ||| Flipped version of `unconsBind`
 export %inline
-bindOutput : (o -> Pull f p es ()) -> Pull f o es r -> Pull f p es r
-bindOutput = flip unconsBind
+bindC : (o -> Pull f p es ()) -> Pull f o es r -> Pull f p es r
+bindC = flip unconsBind
 
 export
-attemptOutput : Pull f o es () -> Pull f (Result es o) fs ()
-attemptOutput p =
-  Att (mapOutput Right p) >>= \case
+attemptC : Pull f o es () -> Pull f (Result es o) fs ()
+attemptC p =
+  Att (mapC Right p) >>= \case
     Left x  => emit (Left x)
     Right _ => pure ()
 

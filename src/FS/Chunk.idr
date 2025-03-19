@@ -81,20 +81,20 @@ unfoldEl init g = unfold init (unfoldChunk g)
 
 ||| Like `fill` but generates chunks of values of up to the given size.
 export
-fillEl : ChunkSize => Chunk c o => o -> Pull f c es ()
-fillEl v =
+fill : ChunkSize => Chunk c o => o -> Pull f c es ()
+fill v =
   let chunk := unfoldChunk (\_ => Right (v,())) ()
    in unfold () (const chunk)
 
 ||| Like `iterate` but generates chunks of values of up to the given size.
 export
-iterateEl : ChunkSize => Chunk c o => o -> (o -> o) -> Stream f es c
-iterateEl v f = unfoldEl v (\x => Right (x, f x))
+iterate : ChunkSize => Chunk c o => o -> (o -> o) -> Stream f es c
+iterate v f = unfoldEl v (\x => Right (x, f x))
 
 ||| Like `replicate` but generates chunks of values of up to the given size.
 export
-replicateEl : ChunkSize => Chunk c o => Nat -> o -> Stream f es c
-replicateEl n v =
+replicate : ChunkSize => Chunk c o => Nat -> o -> Stream f es c
+replicate n v =
   unfoldEl n $ \case
     0   => Left ()
     S k => Right (v,k)
@@ -118,35 +118,35 @@ unconsEl p =
 ||| The element that returned `True` will be the first element of
 ||| the remainder.
 export %inline
-breakEl : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es (Pull f c es r)
-breakEl = breakPull . breakChunk False
+break : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es (Pull f c es r)
+break = breakPull . breakChunk False
 
 ||| Emits elements until the given predicate returns `False`.
 export %inline
-takeWhileEl : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es (Pull f c es r)
-takeWhileEl pred = breakEl (not . pred)
+takeWhile : Chunk c o => (o -> Bool) -> Stream f es c -> Stream f es c
+takeWhile pred = ignore . break (not . pred)
 
 ||| Emits the first `n` elements of a `Pull`, returning the remainder.
 export
-takeEl : Chunk c o => Nat -> Pull f c es r -> Pull f c es (Pull f c es r)
-takeEl k p =
+take : Chunk c o => Nat -> Pull f c es r -> Pull f c es (Pull f c es r)
+take k p =
   assert_total $ uncons p >>= \case
     Left v      => pure (pure v)
     Right (vs,q) => case splitChunkAt k vs of
       Middle pre post => emit pre $> cons post q
-      All n           => emit vs >> takeEl n q
+      All n           => emit vs >> take n q
       Naught          => pure (cons vs q)
 
 ||| Drops the first `n` elements of a `Pull`, returning the
 ||| remainder.
 export
-dropEl : Chunk c o => Nat -> Pull f c es r -> Pull f c es r
-dropEl k p =
+drop : Chunk c o => Nat -> Pull f c es r -> Pull f c es r
+drop k p =
   assert_total $ uncons p >>= \case
     Left v      => pure v
     Right (vs,q) => case splitChunkAt k vs of
       Middle pre post => cons post q
-      All n           => dropEl n q
+      All n           => drop n q
       Naught          => q
 
 ||| Perform the given action on every emitted value.
@@ -162,20 +162,53 @@ foreachEl f p =
 
 ||| Element-wise filtering of a stream of chunks.
 export
-filterEl : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es r
-filterEl pred =
-  mapMaybe $ \v =>
+filter : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es r
+filter pred =
+  mapMaybeC $ \v =>
    let w := filterChunk pred v
     in if isEmpty w then Nothing else Just w
 
 ||| Element-wise filtering of a stream of chunks.
 export %inline
-filterNotEl : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es r
-filterNotEl pred = filterEl (not . pred)
+filterNot : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es r
+filterNot pred = filter (not . pred)
 
 export %inline
 mapEl : (o -> p) -> Pull f (List o) es r -> Pull f (List p) es r
-mapEl = mapOutput . map
+mapEl = mapC . map
+
+--------------------------------------------------------------------------------
+-- Folds
+--------------------------------------------------------------------------------
+
+export %inline
+pfold : Foldable t => (p -> o -> p) -> p -> Pull f (t o) es r -> Pull f q es (p,r)
+pfold g = pfoldC (foldl g)
+
+||| Folds all input using an initial value and binary operator
+export %inline
+fold : Foldable t => (p -> o -> p) -> p -> Stream f es (t o) -> Pull f q es p
+fold f v = map fst . pfold f v
+
+||| Returns `True` if all emitted values of the given stream fulfill
+||| the given predicate
+export %inline
+all : Foldable t => (o -> Bool) -> Stream f es (t o) -> Pull f q es Bool
+all pred = allC (all pred)
+
+||| Returns `True` if any of the emitted values of the given stream fulfills
+||| the given predicate
+export %inline
+any : Foldable t => (o -> Bool) -> Stream f es (t o) -> Pull f q es Bool
+any pred = anyC (any pred)
+
+export %inline
+sum : Foldable t => Num o => Stream f es (t o) -> Pull f q es o
+sum = fold (+) 0
+
+export %inline
+count : Foldable t => Stream f es (t o) -> Pull f q es Nat
+count = fold (const . S) 0
 
 --------------------------------------------------------------------------------
 -- List Implementation

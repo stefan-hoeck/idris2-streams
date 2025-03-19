@@ -39,7 +39,7 @@ in sequence. Here's a very simple example:
 
 ```idris
 example : EmptyPull f es Nat
-example = iterate Z S |> takeWhile (< 10_000_000) |> sum
+example = iterate {c = List Nat} Z S |> takeWhile (< 10_000_000) |> sum
 ```
 
 Let's break this down: `iterate Z S` generates an infinite stream of

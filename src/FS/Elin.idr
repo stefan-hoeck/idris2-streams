@@ -21,7 +21,7 @@ mpullElin f = either absurd id $ runElin (mpull f)
 
 export %inline covering
 toSnocList : (forall s . Stream (Elin s) [] o) -> SnocList o
-toSnocList p = mpullElin (fold [<] (:<) p)
+toSnocList p = mpullElin (foldC (:<) [<] p)
 
 export %inline covering
 toList : (forall s . Stream (Elin s) [] o) -> List o
