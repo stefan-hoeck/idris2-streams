@@ -181,6 +181,10 @@ export %inline
 Monoid (Stream f es o) where
   neutral = pure ()
 
+export %inline
+HasIO (f es) => HasIO (Pull f o es) where
+  liftIO = Exec . liftIO
+
 --------------------------------------------------------------------------------
 -- Creating Pulls
 --------------------------------------------------------------------------------
@@ -291,15 +295,35 @@ export %inline
 uncons : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
 uncons = Uncons
 
-||| Emits the first `n` values of a `Pull`, returning the
-||| remainder.
+||| Emits only the first `n` values of a `Stream`.
+-- TODO: Fix and check scoping
 export
-take : Nat -> Pull f o es r -> Pull f o es (Pull f o es r)
-take 0     p = pure p
+take : Nat -> Stream f es o -> Stream f es o
+take 0     _ = pure ()
 take (S k) p =
   uncons p >>= \case
-    Left v      => pure (pure v)
+    Left _      => pure ()
     Right (v,q) => emit v >> take k q
+
+||| Discards the first `n` values of a `Stream`, returning the
+||| remainder.
+export
+drop : Nat -> Pull f o es r -> Pull f o es r
+drop 0     p = p
+drop (S k) p =
+  uncons p >>= \case
+    Left v      => pure v
+    Right (v,q) => drop k q
+
+||| Only keeps the first element of the input.
+export %inline
+head : Stream f es o -> Stream f es o
+head = take 1
+
+||| Drops the first element of the input.
+export %inline
+tail : Stream f es o -> Stream f es o
+tail = drop 1
 
 ||| Like `uncons` but does not consume the chunk
 export
@@ -321,140 +345,113 @@ breakPull g p =
       NoPost pre      => emit pre $> q
       None            => emit v >> breakPull g q
 
--- takeWhile_ :
---      (takeFailure : Bool)
---   -> (o -> Bool)
---   -> Pull f o es r
---   -> Pull f o es (Maybe $ Pull f o es r)
--- takeWhile_ tf pred p =
---   assert_total $ uncons p >>= \case
---     Left _      => pure Nothing
---     Right (o,p) => case takeWhileImpl tf [<] pred o of
---       Nothing    => cons o $ takeWhile_ tf pred p
---       Just (l,r) => emit l $> Just (cons r p)
---
--- ||| Emits values until the given predicate returns `False`,
--- ||| returning the remainder of the `Pull`.
--- export %inline
--- takeWhile :
---      (o -> Bool)
---   -> Pull f o es r
---   -> Pull f o es (Maybe $ Pull f o es r)
--- takeWhile = takeWhile_ False
---
--- ||| Like `takeWhile` but also includes the first failure.
--- export %inline
--- takeThrough :
---      (o -> Bool)
---   -> Pull f o es r
---   -> Pull f o es (Maybe $ Pull f o es r)
--- takeThrough = takeWhile_ True
---
--- ||| Emits values until the given pull emits a `Nothing`.
--- export
--- takeWhileJust :
---      Pull f (Maybe o) es r
---   -> Pull f o es (Pull f (Maybe o) es r)
--- takeWhileJust p =
---   assert_total $ uncons p >>= \case
---     Left v      => pure (pure v)
---     Right (o,p) => case takeWhileJustImpl [<] o of
---       (l,[]) => cons l $ takeWhileJust p
---       (l,r)  => emit l $> cons r p
---
--- ||| Emits the last `n` elements of the input
--- |||
--- ||| Note: The whole `n` values have to be kept in memory, therefore,
--- |||       the result will be emitted as a single chunk. Take memory
--- |||       consumption into account when using this for very large `n`.
--- export
--- takeRight :
---      (n : Nat)
---   -> {auto 0 p : IsSucc n}
---   -> Pull f o es ()
---   -> Pull f q es (List o)
--- takeRight n = go []
---   where
---     go : List o -> Pull f o es () -> Pull f q es (List o)
---     go xs p =
---       assert_total $ unconsN n True p >>= \case
---         Nothing     => pure xs
---         Just (ys,q) => go (drop (length ys) xs ++ ys) q
---
--- dropWhile_ :
---      (dropFailure : Bool)
---   -> (o -> Bool)
---   -> Pull f o es ()
---   -> Pull f o es (Maybe $ Pull f o es ())
--- dropWhile_ df pred p =
---   assert_total $ uncons p >>= \case
---     Left _      => pure Nothing
---     Right (o,p) => case dropWhileImpl pred o of
---       []   => dropWhile_ df pred p
---       h::t => case df of
---         True  => pure $ Just (cons t p)
---         False => pure $ Just (Output (h::t) >> p)
---
--- ||| Drops values from a stream while the given predicate returns `True`,
--- ||| returning the remainder of the stream (if any).
--- export
--- dropWhile :
---      (o -> Bool)
---   -> Pull f o es ()
---   -> Pull f o es (Maybe $ Pull f o es ())
--- dropWhile = dropWhile_ False
---
--- ||| Like `dropWhile` but also drops the first value where
--- ||| the predicate returns `False`.
--- export
--- dropThrough :
---      (o -> Bool)
---   -> Pull f o es ()
---   -> Pull f o es (Maybe $ Pull f o es ())
--- dropThrough = dropWhile_ True
---
--- ||| Returns the first value fulfilling the given predicate
--- ||| together with the remainder of the stream.
--- export
--- find :
---      (o -> Bool)
---   -> Pull f o es ()
---   -> Pull f p es (Maybe (o, Pull f o es ()))
--- find pred p =
---   assert_total $ uncons p >>= \case
---     Left _       => pure Nothing
---     Right (os,q) => case findImpl pred os of
---       Just (v,rem) => pure (Just (v, cons rem q))
---       Nothing      => find pred q
---
--- ||| Chunk-wise maps the emit of a `Pull`
--- export %inline
--- mapChunk : (c o -> d p) -> Pull f o es r -> Pull d f p es r
--- mapChunk f p =
---   assert_total $ uncons p >>= \case
---     Left x       => pure x
---     Right (vs,p) => consChunk (f vs) $ mapChunk f p
---
--- ||| Chunk-wise effectful mapping of the emit of a `Pull`
--- export
--- mapChunkEval : (c o -> f es (d p)) -> Pull f o es r -> Pull d f p es r
--- mapChunkEval f p =
---   assert_total $ uncons p >>= \case
---     Left x       => pure x
---     Right (vs,p) => do
---       ws <- Exec (f vs)
---       consChunk ws $ mapChunkEval f p
---
--- ||| Maps the emit of a `Pull`
--- export %inline
--- mapOutput : (o -> p) -> Pull f o es r -> Pull f p es r
--- mapOutput = mapChunk . map
---
--- ||| Filters the emit of a `Pull` emitting only the
--- ||| values that fulfill the given predicate
--- export %inline
--- filter : (o -> Bool) -> Pull f o es r -> Pull f o es r
--- filter = mapChunk . filter
+-- TODO: Adjust and check scoping
+takeWhile_ : (takeFail : Bool) -> (o -> Bool) -> Stream f es o -> Stream f es o
+takeWhile_ tf pred p =
+  assert_total $ uncons p >>= \case
+    Left v      => pure ()
+    Right (o,p) => case pred o of
+      True  => emit o >> takeWhile_ tf pred p
+      False => case tf of
+        True  => emit o
+        False => pure ()
+
+||| Emits values until the given predicate returns `False`,
+||| returning the remainder of the `Pull`.
+export %inline
+takeWhile : (o -> Bool) -> Stream f es o -> Stream f es o
+takeWhile = takeWhile_ False
+
+||| Like `takeWhile` but also includes the first failure.
+export %inline
+takeThrough : (o -> Bool) -> Stream f es o -> Stream f es o
+takeThrough = takeWhile_ True
+
+||| Emits values until the given pull emits a `Nothing`.
+export
+takeWhileJust : Stream f es (Maybe o) -> Stream f es o
+takeWhileJust p =
+  assert_total $ uncons p >>= \case
+    Left _      => pure ()
+    Right (Just v,q)  => emit v >> takeWhileJust q
+    Right (Nothing,q) => pure ()
+
+dropWhile_ : (dropFail : Bool) -> (o -> Bool) -> Pull f o es r -> Pull f o es r
+dropWhile_ df pred p =
+  assert_total $ uncons p >>= \case
+    Left v      => pure v
+    Right (o,q) => case pred o of
+      True => dropWhile_ df pred q
+      False => case df of
+        True  => q
+        False => cons o q
+
+||| Drops values from a stream while the given predicate returns `True`,
+||| returning the remainder of the stream (if any).
+export %inline
+dropWhile : (o -> Bool) -> Pull f o es r -> Pull f o es r
+dropWhile = dropWhile_ False
+
+||| Like `dropWhile` but also drops the first value where
+||| the predicate returns `False`.
+export %inline
+dropThrough : (o -> Bool) -> Pull f o es r -> Pull f o es r
+dropThrough = dropWhile_ True
+
+||| Filters the emit of a `Pull` emitting only the
+||| values that fulfill the given predicate
+export
+mapMaybe : (o -> Maybe p) -> Pull f o es r -> Pull f p es r
+mapMaybe f p =
+  assert_total $ uncons p >>= \case
+    Left x      => pure x
+    Right (v,q) => case f v of
+      Just w  => emit w >> mapMaybe f q
+      Nothing => mapMaybe f q
+
+||| Chunk-wise maps the emit of a `Pull`
+export %inline
+mapOutput : (o -> p) -> Pull f o es r -> Pull f p es r
+mapOutput f = mapMaybe (Just . f)
+
+||| Chunk-wise effectful mapping of the emit of a `Pull`
+export
+evalMap : (o -> f es p) -> Pull f o es r -> Pull f p es r
+evalMap f p =
+  assert_total $ uncons p >>= \case
+    Left x       => pure x
+    Right (vs,p) => do
+      ws <- exec (f vs)
+      emit ws
+      evalMap f p
+
+||| Chunk-wise effectful mapping of the emit of a `Pull`
+export
+evalMapMaybe : (o -> f es (Maybe p)) -> Pull f o es r -> Pull f p es r
+evalMapMaybe f p =
+  assert_total $ uncons p >>= \case
+    Left x       => pure x
+    Right (v,q) => do
+      Just w <- exec (f v) | Nothing => evalMapMaybe f q
+      emit w
+      evalMapMaybe f q
+
+||| Filters the emit of a `Pull` emitting only the
+||| values that fulfill the given predicate
+export
+filter : (o -> Bool) -> Pull f o es r -> Pull f o es r
+filter pred p =
+  assert_total $ uncons p >>= \case
+    Left x      => pure x
+    Right (v,q) => case pred v of
+      True  => emit v >> filter pred q
+      False => filter pred q
+
+||| Wraps the values emitted by this stream in a `Just` and
+||| marks its end with a `Nothing`.
+export
+endWithNothing : Pull f o es r -> Pull f (Maybe o) es r
+endWithNothing s = mapOutput Just s >>= \res => emit Nothing $> res
 
 --------------------------------------------------------------------------------
 -- Folds
@@ -494,27 +491,45 @@ any pred p =
     Right (vs,q) => case pred vs of
       False  => any pred q
       True   => pure True
---
--- ||| General stateful conversion of a `Pull`s emit.
--- |||
--- ||| Aborts as soon as the given accumulator function returns `Nothing`
--- export
--- scanChunkMaybe :
---      x
---   -> (x -> Maybe (c o -> (d p,x)))
---   -> Pull f o es ()
---   -> Pull d f p es x
--- scanChunkMaybe s1 f p =
---   assert_total $ case f s1 of
---     Nothing => pure s1
---     Just g  => uncons p >>= \case
---       Left r      => pure s1
---       Right (v,p) => let (w,s2) := g v in consChunk w $ scanChunkMaybe s2 f p
---
--- ||| Like `scanChunkMaybe` but will transform the whole emit.
--- export
--- scanChunk : x -> (x -> c o -> (d p,x)) -> Pull f o es () -> Pull d f p es x
--- scanChunk s1 f = scanChunkMaybe s1 (Just . f)
+
+export %inline
+sum : Num o => Stream f es o -> Pull f q es o
+sum = fold 0 (+)
+
+export %inline
+count : Stream f es o -> Pull f q es Nat
+count = fold 0 (const . S)
+
+||| General stateful conversion of a `Pull`s emit.
+|||
+||| Aborts as soon as the given accumulator function returns `Nothing`
+export
+scanMaybe : s -> (s -> Maybe (o -> (p,s))) -> Stream f es o -> Pull f p es s
+scanMaybe s1 f p =
+  assert_total $ case f s1 of
+    Nothing => pure s1
+    Just g  => uncons p >>= \case
+      Left _      => pure s1
+      Right (v,p) => let (w,s2) := g v in emit w >> scanMaybe s2 f p
+
+||| Like `scanMaybe` but will transform the whole emit.
+export %inline
+scan : s -> (s -> o -> (p,s)) -> Stream f es o -> Pull f p es s
+scan s1 f = scanMaybe s1 (Just . f)
+
+||| Like `scan` but will possibly also emit the final state.
+export
+scanFull :
+     s
+  -> (s -> o -> (p,s))
+  -> (s -> Maybe p)
+  -> Stream f es o
+  -> Stream f es p
+scanFull s1 f last p = do
+  v <- scan s1 f p
+  case last v of
+    Just rem => emit rem
+    Nothing  => pure ()
 
 --------------------------------------------------------------------------------
 -- Resource Management
@@ -674,27 +689,13 @@ export %inline
 bindOutput : (o -> Pull f p es ()) -> Pull f o es r -> Pull f p es r
 bindOutput = flip unconsBind
 
--- export
--- bindOutput1 : (o -> Pull f p es ()) -> Pull f o es () -> Pull f p es ()
--- bindOutput1 f p =
---   assert_total $ unconsEl p >>= \case
---     Left _      => pure ()
---     Right (v,q) => f v >> bindOutput1 f q
---
--- export
--- attemptOutput1 : Pull1 f o es () -> Pull1 f (Result es o) fs ()
--- attemptOutput1 p =
---   Att (mapChunk Right p) >>= \case
---     Left x  => emit (Left x)
---     Right _ => pure ()
---
--- export
--- attemptOutput : Pull f o es () -> Pull f (Result es o) fs ()
--- attemptOutput p =
---   Att (mapOutput Right p) >>= \case
---     Left x  => emit (Left x)
---     Right _ => pure ()
---
+export
+attemptOutput : Pull f o es () -> Pull f (Result es o) fs ()
+attemptOutput p =
+  Att (mapOutput Right p) >>= \case
+    Left x  => emit (Left x)
+    Right _ => pure ()
+
 --------------------------------------------------------------------------------
 -- Evaluating Pulls
 --------------------------------------------------------------------------------

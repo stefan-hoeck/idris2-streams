@@ -35,7 +35,7 @@ prop_unfold =
     next : List a -> UnfoldRes () (List a) a
     next []     = Done ()
     next [h]    = Last () h
-    next (h::t) = Chunk h t
+    next (h::t) = More h t
 
 prop_unfoldEval : Property
 prop_unfoldEval =
@@ -47,7 +47,7 @@ prop_unfoldEval =
     next : List a -> Elin s es (UnfoldRes () (List a) a)
     next []     = pure $ Done ()
     next [h]    = pure $ Last () h
-    next (h::t) = pure $ Chunk h t
+    next (h::t) = pure $ More h t
 
 prop_unfoldEvalMaybe : Property
 prop_unfoldEvalMaybe =

@@ -68,6 +68,7 @@ interface Chunk (0 c,o : Type) | c where
   unconsChunk  : c -> Maybe (o, c)
   splitChunkAt : Nat -> c -> SplitRes c
   breakChunk   : (keepHit : Bool) -> (o -> Bool) -> c -> BreakRes c
+  filterChunk  : (o -> Bool) -> c -> c
 
 --------------------------------------------------------------------------------
 -- Utilities
@@ -120,40 +121,61 @@ export %inline
 breakEl : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es (Pull f c es r)
 breakEl = breakPull . breakChunk False
 
--- ||| Emits the first `n` elements of a `Pull`, returning the remainder.
--- export
--- takeEl : Split o => Nat -> Pull f o es r -> Pull f o es (Pull f o es r)
--- takeEl k p =
---   assert_total $ uncons p >>= \case
---     Left v      => pure (pure v)
---     Right (vs,q) => case splitAt k vs of
---       Middle pre post => emit pre $> cons post q
---       All pre n       => emit pre >> takeEl n q
---       Naught          => pure (cons vs q)
---
--- ||| Drops the first `n` values of a `Pull`, returning the
--- ||| remainder.
--- export
--- dropEl : Split o => Nat -> Pull f o es r -> Pull f o es r
--- dropEl k p =
---   assert_total $ uncons p >>= \case
---     Left v      => pure v
---     Right (vs,q) => case splitAt k vs of
---       Middle pre post => cons post q
---       All _ n         => dropEl n q
---       Naught          => q
---
+||| Emits elements until the given predicate returns `False`.
+export %inline
+takeWhileEl : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es (Pull f c es r)
+takeWhileEl pred = breakEl (not . pred)
 
--- ||| Perform the given action on every emitted value.
--- |||
--- ||| For acting on output without actually draining the stream, see
--- ||| `observe` and `observe1`.
--- export
--- foreach1 : Uncons c o => (o -> f es ()) -> Pull f c es r -> Pull f q es r
--- foreach1 f p =
---   assert_total $ unconsEl p >>= \case
---     Left x      => pure x
---     Right (v,p) => exec (f v) >> foreach1 f p
+||| Emits the first `n` elements of a `Pull`, returning the remainder.
+export
+takeEl : Chunk c o => Nat -> Pull f c es r -> Pull f c es (Pull f c es r)
+takeEl k p =
+  assert_total $ uncons p >>= \case
+    Left v      => pure (pure v)
+    Right (vs,q) => case splitChunkAt k vs of
+      Middle pre post => emit pre $> cons post q
+      All n           => emit vs >> takeEl n q
+      Naught          => pure (cons vs q)
+
+||| Drops the first `n` elements of a `Pull`, returning the
+||| remainder.
+export
+dropEl : Chunk c o => Nat -> Pull f c es r -> Pull f c es r
+dropEl k p =
+  assert_total $ uncons p >>= \case
+    Left v      => pure v
+    Right (vs,q) => case splitChunkAt k vs of
+      Middle pre post => cons post q
+      All n           => dropEl n q
+      Naught          => q
+
+||| Perform the given action on every emitted value.
+|||
+||| For acting on output without actually draining the stream, see
+||| `observe` and `observe1`.
+export
+foreachEl : Chunk c o => (o -> f es ()) -> Pull f c es r -> Pull f q es r
+foreachEl f p =
+  assert_total $ unconsEl p >>= \case
+    Left x      => pure x
+    Right (v,p) => exec (f v) >> foreachEl f p
+
+||| Element-wise filtering of a stream of chunks.
+export
+filterEl : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es r
+filterEl pred =
+  mapMaybe $ \v =>
+   let w := filterChunk pred v
+    in if isEmpty w then Nothing else Just w
+
+||| Element-wise filtering of a stream of chunks.
+export %inline
+filterNotEl : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es r
+filterNotEl pred = filterEl (not . pred)
+
+export %inline
+mapEl : (o -> p) -> Pull f (List o) es r -> Pull f (List p) es r
+mapEl = mapOutput . map
 
 --------------------------------------------------------------------------------
 -- List Implementation
@@ -207,40 +229,12 @@ Chunk (List a) a where
 
   breakChunk = breakList [<]
 
+  filterChunk = filter
+
 -- --------------------------------------------------------------------------------
 -- -- Break
 -- --------------------------------------------------------------------------------
 --
-
--- ||| Used for implementing `FS.Pull.takeWhile` and `FS.Pull.takeThrough`
--- export
--- takeWhileImpl : Bool -> SnocList o -> (o -> Bool) -> List o -> Maybe (List o,List o)
--- takeWhileImpl tf sx f []        = Nothing
--- takeWhileImpl tf sx f (x :: xs) =
---   if      f x then takeWhileImpl tf (sx :< x) f xs
---   else if tf  then Just (sx <>> [x], xs)
---   else             Just (sx <>> [], x::xs)
---
--- ||| Used for implementing `FS.Pull.takeWhileJust`
--- export
--- takeWhileJustImpl : SnocList o -> List (Maybe o) -> (List o,List $ Maybe o)
--- takeWhileJustImpl sx []        = (sx <>> [], [])
--- takeWhileJustImpl sx (x :: xs) =
---   case x of
---     Nothing => (sx <>> [], Nothing :: xs)
---     Just v  => takeWhileJustImpl (sx :< v) xs
---
--- ||| Used for implementing `FS.Pull.dropWhile` and `FS.Pull.dropThrough`
--- export
--- dropWhileImpl : (o -> Bool) -> List o -> List o
--- dropWhileImpl f []        = []
--- dropWhileImpl f (x :: xs) = if f x then dropWhileImpl f xs else x::xs
---
--- ||| Used for implementing `FS.Pull.find`
--- export
--- findImpl : (o -> Bool) -> List o -> Maybe (o,List o)
--- findImpl f []        = Nothing
--- findImpl f (x :: xs) = if f x then Just (x,xs) else findImpl f xs
 --
 -- chunkedGo :
 --      SnocList (List a)

@@ -109,7 +109,7 @@ continuous = repeat . eval . get
 |||       might be lost.
 export %inline
 discrete : SignalRef a -> Stream (Async e) es a
-discrete s = unfoldEval 0 (map (uncurry Chunk). next s)
+discrete s = unfoldEval 0 (map (uncurry More). next s)
 
 ||| Blocks the fiber and observes the given signal until the given
 ||| predicate returns `True`.

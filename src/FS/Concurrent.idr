@@ -151,22 +151,23 @@ merge ss  = Prelude.do
 
   merged chnl done res sema sc ss
 
--- ||| Runs the given streams in parallel and nondeterministically interleaves
--- ||| their output.
--- |||
--- ||| This will terminate as soon as the first string is exhausted.
--- export
--- mergeHaltL : (s1,s2 : AsyncStream  e es o) -> AsyncStream e es o
--- mergeHaltL s1 s2 = takeWhileJust $ merge [endWithNothing s1, map Just s2]
---
--- ||| Runs the given streams in parallel and nondeterministically interleaves
--- ||| their output.
--- |||
--- ||| This will terminate as soon as either stream is exhausted.
--- export
--- mergeHaltBoth : (s1,s2 : AsyncStream  e es o) -> AsyncStream e es o
--- mergeHaltBoth s1 s2 =
---   takeWhileJust $ merge [endWithNothing s1, endWithNothing s2]
+||| Runs the given streams in parallel and nondeterministically interleaves
+||| their output.
+|||
+||| This will terminate as soon as the first string is exhausted.
+export
+mergeHaltL : (s1,s2 : AsyncStream e es o) -> AsyncStream e es o
+mergeHaltL s1 s2 =
+  takeWhileJust $ merge [endWithNothing s1, mapOutput Just s2]
+
+||| Runs the given streams in parallel and nondeterministically interleaves
+||| their output.
+|||
+||| This will terminate as soon as either stream is exhausted.
+export
+mergeHaltBoth : (s1,s2 : AsyncStream  e es o) -> AsyncStream e es o
+mergeHaltBoth s1 s2 =
+  takeWhileJust $ merge [endWithNothing s1, endWithNothing s2]
 
 --------------------------------------------------------------------------------
 -- Parallel Joining of Streams

@@ -10,7 +10,7 @@ module README
 
 import IO.Async.Loop.Posix
 import FS.Elin as E
-import FS.Stream as S
+import FS
 import FS.Posix
 import FS.System
 
@@ -20,9 +20,9 @@ import FS.System
 Prog = AsyncStream Poll [Errno]
 
 covering
-runProg : Prog () -> IO ()
+runProg : Prog Void -> IO ()
 runProg prog =
-  simpleApp $ run (handle [eval . stderrLn . interpolate] prog)
+  simpleApp $ mpull (handle [stderrLn . interpolate] prog)
 ```
 
 ## Streams of Data
@@ -38,7 +38,7 @@ a monad, so that we can get streams of streams, which - just like with
 in sequence. Here's a very simple example:
 
 ```idris
-example : Stream f es Nat
+example : EmptyPull f es Nat
 example = iterate Z S |> takeWhile (< 10_000_000) |> sum
 ```
 
@@ -57,7 +57,7 @@ logging the generated values to `stdout`:
 ```idris
 covering
 runExample : IO ()
-runExample = runProg (example |> printLnTo Stdout)
+runExample = runProg (example >>= prntLn)
 ```
 
 If you run the above (for instance, at the REPL by invoking `:exec runExample`),
@@ -93,9 +93,10 @@ fahrenheit : Prog ()
 fahrenheit =
      readBytes "resources/fahrenheit.txt"
   |> lines
-  |> filterNot (\x => null (trim x) || isPrefixOf "//" x)
-  |> map toCelsius
-  |> printLnTo Stdout
+  |> filterNotEl (\x => null (trim x) || isPrefixOf "//" x)
+  |> mapEl (fromString . show . toCelsius)
+  |> unlines
+  |> writeTo Stdout
 ```
 
 The above will convert every line in file `resources/fahrenheit.txt`

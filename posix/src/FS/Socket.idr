@@ -25,4 +25,4 @@ parameters {0    es  : List Type}
     resource ((\x => Socket.R x) <$> socketnb d tpe) $ \(R sock) => do
       bind sock addr
       listen sock 128
-      unfoldEvalChunk (Just . toList <$> acceptnb sock)
+      repeat $ exec (acceptnb sock) >>= emits . toList

@@ -3,13 +3,14 @@ module FS.Posix
 import Data.String
 import Data.FilePath
 import Derive.Prelude
+import FS.Internal.Bytes
 import FS.Posix.Internal
 import FS.Pull
 
 import public IO.Async.Posix
 import public FS.Concurrent
 import public FS.Bytes
-import public FS.Stream
+import public FS.Pull
 
 import public System.Posix.Dir
 import public System.Posix.File.Stats
@@ -68,10 +69,13 @@ parameters {0    es  : List Type}
   export
   entries_ : (withParent : Bool) -> Dir -> AsyncStream e es String
   entries_ withParent dir =
-    unfoldEvalChunk $ ifError ENOENT (Just []) $ readdir String dir >>= \case
-      Res ".." => pure (Just (if withParent then [".."] else []))
-      Res res  => pure (Just [res])
-      _        => pure Nothing
+    unfoldEvalMaybe next
+    where
+      next : Async e es (Maybe String)
+    -- $ ifError ENOENT (Just []) $ readdir String dir >>= \case
+    --   Res ".." => pure (Just (if withParent then [".."] else []))
+    --   Res res  => pure (Just [res])
+    --   _        => pure Nothing
 
   ||| Produces a stream of directory entries.
   |||
@@ -79,29 +83,25 @@ parameters {0    es  : List Type}
   export
   entries : (pth : Path p) -> AsyncStream e es (Entry p)
   entries pth =
-    resource (opendir "\{pth}") $ evalMapChunk toEntries . entries_ False
+    resource (opendir "\{pth}") $ evalMapMaybe toEntry . entries_ False
 
     where
-      toEntry : String -> Async e es (List $ Entry p)
+      toEntry : String -> Async e es (Maybe $ Entry p)
       toEntry s =
         case (pth />) <$> Body.parse s of
-          Nothing     => pure []
-          Just newpth => ifError ENOENT [] $ do
+          Nothing     => pure Nothing
+          Just newpth => ifError ENOENT Nothing $ do
             stats <- elift1 $ lstat "\{newpth}"
-            pure [E newpth (fromMode stats.mode) stats]
-
-      toEntries : List String -> Async e es (List $ Entry p)
-      toEntries = map join . traverse toEntry
+            pure $ Just (E newpth (fromMode stats.mode) stats)
 
   ||| Like entries but also enters child directories.
   export
   deepEntries : (pth : Path p) -> AsyncStream e es (Entry p)
   deepEntries pth =
-    assert_total $ do
-      e <- entries pth
+    assert_total $ unconsBind (entries pth) $ \e =>
       case e.type of
-        Directory => cons1 e (deepEntries e.path)
-        _         => pure e
+        Directory => emit e >> deepEntries e.path
+        _         => emit e
 
 --------------------------------------------------------------------------------
 -- Files
@@ -115,11 +115,6 @@ parameters {0    es  : List Type}
            {auto pol : PollH e}
            {auto has : Has Errno es}
 
-  bytesPull : FileDesc a => a -> Bits32 -> AsyncPull e ByteString es ()
-  bytesPull fd buf =
-    assert_total $ Eval (readnb fd _ buf) >>= \case
-      BS 0 _ => pure ()
-      bs     => output1 bs >> bytesPull fd buf
 
   ||| Streams chunks of byte of at most the given size from the given
   ||| file descriptor.
@@ -128,7 +123,7 @@ parameters {0    es  : List Type}
   ||| such as standard input.
   export %inline
   bytes : FileDesc a => a -> Bits32 -> AsyncStream e es ByteString
-  bytes fd buf = S (bytesPull fd buf)
+  bytes fd buf = unfoldEvalMaybe $ nonEmpty <$> readnb fd _ buf
 
   ||| Tries to open the given file and starts reading chunks of bytes
   ||| from the created file descriptor.
@@ -143,23 +138,23 @@ parameters {0    es  : List Type}
   content = readBytes . interpolate . path
 
   export
-  linesTo : ToBytes r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es ()
-  linesTo fd = mapChunksEval (writeLines fd)
+  writeTo : ToBuf r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es ()
+  writeTo fd = foreach (fwritenb fd)
 
   export
   printLnTo : Show r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es ()
-  printLnTo = linesTo @{ShowToBytes}
+  printLnTo fd = foreach (fwritenb fd . (++"\n") . show)
 
   export
-  writeTo : ToBytes r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es ()
-  writeTo fd = mapChunksEval (writeAll fd)
+  printTo : Show r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es ()
+  printTo fd = foreach (fwritenb fd . show)
 
   export
-  writeFile : ToBytes r => String -> AsyncStream e es r -> AsyncStream e es ()
+  writeFile : ToBuf r => String -> AsyncStream e es r -> AsyncStream e es ()
   writeFile path str =
     resource (openFile path create 0o666) $ \fd => writeTo fd str
 
   export
-  appendFile : ToBytes r => String -> AsyncStream e es r -> AsyncStream e es ()
+  appendFile : ToBuf r => String -> AsyncStream e es r -> AsyncStream e es ()
   appendFile path str =
     resource (openFile path append 0o666) $ \fd => writeTo fd str

@@ -6,6 +6,11 @@ import Data.ByteVect
 
 %default total
 
+export
+nonEmpty : ByteString -> Maybe ByteString
+nonEmpty (BS 0 _) = Nothing
+nonEmpty bs       = Just bs
+
 public export
 0 SnocBytes : Type
 SnocBytes = SnocList ByteString
@@ -17,7 +22,6 @@ Bytes = List ByteString
 export
 nl : ByteString
 nl = singleton 0x0a
-
 
 ls : SnocBytes -> (n : Nat) -> ByteVect n -> (Bytes, ByteString)
 ls sb n bs = case breakNL bs of

@@ -35,7 +35,7 @@ splitAtBytes :
 
 export
 request : AsyncStream Poll [Errno] ByteString -> AsyncStream Poll [Errno] Request
-request (S p) =
+request p =
   let spl := splitAtBytes "\r\n\r\n" p
    in ?fooo
 ```
