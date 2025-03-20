@@ -3,6 +3,8 @@ module FS.Pull
 import Control.Monad.MCancel
 import Control.Monad.Resource
 
+import Data.SnocList
+
 import public FS.Core
 
 %default total
@@ -29,10 +31,16 @@ emitList : List o -> Stream f es (List o)
 emitList [] = pure ()
 emitList vs = emit vs
 
+||| Emits a single optional value.
+export
+emitMaybe : Maybe o -> Stream f es o
+emitMaybe Nothing  = pure ()
+emitMaybe (Just v) = emit v
+
 ||| Utility to emit a single list chunk from a snoc list.
 export %inline
-emitSnoc : SnocList o -> Stream f es (List o)
-emitSnoc = emitList . (<>> [])
+emitSnoc : SnocList o -> Maybe o -> Stream f es (List o)
+emitSnoc sv m = emitList $ (sv <>> maybe [] pure m)
 
 ||| Emits a single chunk of output generated from an effectful
 ||| computation.
@@ -99,6 +107,12 @@ export %inline
 cons : o -> Pull f o es r -> Pull f o es r
 cons vs p = Output vs >> p
 
+||| Prepends the given optional output to a pull.
+export %inline
+consMaybe : Maybe o -> Pull f o es r -> Pull f o es r
+consMaybe (Just v) p = cons v p
+consMaybe Nothing  p = p
+
 --------------------------------------------------------------------------------
 -- Splitting Streams
 --------------------------------------------------------------------------------
@@ -110,25 +124,25 @@ export %inline
 uncons : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
 uncons = Uncons
 
+||| Result of splitting a value into two parts. This is used to
+||| split up streams of data along logical boundaries.
 public export
 data BreakRes : (c : Type) -> Type where
-  Broken : (pre, post : c) -> BreakRes c
-  NoPre  : (post : c) -> BreakRes c
-  NoPost : (pre  : c) -> BreakRes c
+  ||| The value was broken and we got a (possibly empty) pre- and postfix.
+  Broken : (pre, post : Maybe c) -> BreakRes c
+  ||| The value could not be broken.
   Keep   : c -> BreakRes c
 
 ||| Uses the given breaking function to break the pull into
-||| prefix of emitted chunks and a suffix that is returned as
-||| result.
+||| a prefix of emitted chunks and a suffix that is returned as
+||| the result.
 export
 breakPull : (o -> BreakRes o) -> Pull f o es r -> Pull f o es (Pull f o es r)
 breakPull g p =
   assert_total $ uncons p >>= \case
     Left r      => pure (pure r)
     Right (v,q) => case g v of
-      Broken pre post => emit pre $> cons post q
-      NoPre      post => pure $ cons post q
-      NoPost pre      => emit pre $> q
+      Broken pre post => emitMaybe pre $> consMaybe post q
       Keep w          => emit w >> breakPull g q
 
 ||| Uses the given breaking function to break the pull into
@@ -140,11 +154,9 @@ splitPull g = go [<]
     go : SnocList p -> Pull f o es r -> Pull f (List p) es r
     go sp pl =
       assert_total $ uncons pl >>= \case
-        Left r      => emitSnoc sp $> r
+        Left r      => emitSnoc sp Nothing $> r
         Right (v,q) => case g v of
-          Broken pre post => emitSnoc (sp :< pre) >> go [<post] q
-          NoPre      post => emitSnoc sp >> go [<post] q
-          NoPost pre      => emitSnoc (sp :< pre) >> go [<] q
+          Broken pre post => emitSnoc sp pre >> go (maybe [<] pure post) q
           Keep w          => go (sp :< w) q
 
 ||| Emits only the first `n` chunks of values of a `Stream`.

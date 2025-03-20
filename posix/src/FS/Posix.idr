@@ -20,12 +20,6 @@ import public System.Posix.File
 %default total
 %language ElabReflection
 
-||| Utility for converting a value to a byte vector.
-public export
-0 ToBytes : Type -> Type
-ToBytes a = Cast a ByteString
-
-export %inline
 [ShowToBytes] Show a => Cast a ByteString where
   cast = fromString . show
 
@@ -68,14 +62,16 @@ parameters {0    es  : List Type}
   ||| and stats of files.
   export
   entries_ : (withParent : Bool) -> Dir -> AsyncStream e es String
-  entries_ withParent dir =
-    unfoldEvalMaybe next
+  entries_ withParent dir = unfoldEvalMaybe next
     where
       next : Async e es (Maybe String)
-    -- $ ifError ENOENT (Just []) $ readdir String dir >>= \case
-    --   Res ".." => pure (Just (if withParent then [".."] else []))
-    --   Res res  => pure (Just [res])
-    --   _        => pure Nothing
+      next =
+        assert_total $ catch Errno (readdir String dir) >>= \case
+          Left x    => if x == ENOENT then next else throw x
+          Right res => case res of
+            Res ".." => if withParent then pure (Just "..") else next
+            Res res  => pure (Just res)
+            _        => pure Nothing
 
   ||| Produces a stream of directory entries.
   |||
@@ -138,23 +134,28 @@ parameters {0    es  : List Type}
   content = readBytes . interpolate . path
 
   export
-  writeTo : ToBuf r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es ()
+  writeTo : ToBuf r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es Void
   writeTo fd = foreach (fwritenb fd)
 
   export
-  printLnTo : Show r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es ()
+  printLnTo : Show r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es Void
   printLnTo fd = foreach (fwritenb fd . (++"\n") . show)
 
   export
-  printTo : Show r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es ()
+  printLnsTo : Show r => FileDesc a => a -> AsyncStream e es (List r) -> AsyncStream e es Void
+  printLnsTo fd =
+    foreach $ \xs => let impl := ShowToBytes {a = r} in writeLines fd xs
+
+  export
+  printTo : Show r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es Void
   printTo fd = foreach (fwritenb fd . show)
 
   export
-  writeFile : ToBuf r => String -> AsyncStream e es r -> AsyncStream e es ()
+  writeFile : ToBuf r => String -> AsyncStream e es r -> AsyncStream e es Void
   writeFile path str =
     resource (openFile path create 0o666) $ \fd => writeTo fd str
 
   export
-  appendFile : ToBuf r => String -> AsyncStream e es r -> AsyncStream e es ()
+  appendFile : ToBuf r => String -> AsyncStream e es r -> AsyncStream e es Void
   appendFile path str =
     resource (openFile path append 0o666) $ \fd => writeTo fd str

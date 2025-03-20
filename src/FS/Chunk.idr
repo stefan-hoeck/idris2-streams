@@ -58,6 +58,17 @@ data SplitRes : Type -> Type where
   Naught : SplitRes c
   All    : Nat -> SplitRes c
 
+public export
+data BreakInstruction : Type where
+  ||| Take the first failing value as part of the emitted prefix
+  TakeFailure : BreakInstruction
+
+  ||| Keep the failing value as part of the postfix.
+  PostFailure : BreakInstruction
+
+  ||| Discard the failing value
+  DropFailure : BreakInstruction
+
 ||| A `Chunk c o` is a container type `c` holding elements of type `o`.
 |||
 ||| Examples include `List a` with element type `a` and `ByteString` with
@@ -69,7 +80,7 @@ interface Chunk (0 c,o : Type) | c where
   isEmpty        : c -> Bool
   unconsChunk    : c -> Maybe (o, c)
   splitChunkAt   : Nat -> c -> SplitRes c
-  breakChunk     : (keepHit : Bool) -> (o -> Bool) -> c -> BreakRes c
+  breakChunk     : BreakInstruction -> (o -> Bool) -> c -> BreakRes c
   filterChunk    : (o -> Bool) -> c -> c
 
 --------------------------------------------------------------------------------
@@ -119,34 +130,34 @@ unconsEl p =
 ||| the remainder.
 export %inline
 break : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es (Pull f c es r)
+break pred = breakPull (breakChunk PostFailure pred)
 
 ||| Emits elements until the given predicate returns `False`.
 export %inline
 takeWhile : Chunk c o => (o -> Bool) -> Stream f es c -> Stream f es c
-takeWhile pred = ignore . break (not . pred)
+takeWhile pred = newScope . ignore . break (not . pred)
 
 ||| Emits the first `n` elements of a `Pull`, returning the remainder.
 export
-take : Chunk c o => Nat -> Pull f c es r -> Pull f c es (Pull f c es r)
-take k p =
+splitAt : Chunk c o => Nat -> Pull f c es r -> Pull f c es (Pull f c es r)
+splitAt k p =
   assert_total $ uncons p >>= \case
     Left v      => pure (pure v)
     Right (vs,q) => case splitChunkAt k vs of
       Middle pre post => emit pre $> cons post q
-      All n           => emit vs >> take n q
+      All n           => emit vs >> splitAt n q
       Naught          => pure (cons vs q)
+
+||| Emits the first `n` elements of a `Pull`, returning the remainder.
+export %inline
+take : Chunk c o => Nat -> Pull f c es r -> Pull f c es ()
+take n = ignore . newScope . splitAt n
 
 ||| Drops the first `n` elements of a `Pull`, returning the
 ||| remainder.
-export
+export %inline
 drop : Chunk c o => Nat -> Pull f c es r -> Pull f c es r
-drop k p =
-  assert_total $ uncons p >>= \case
-    Left v      => pure v
-    Right (vs,q) => case splitChunkAt k vs of
-      Middle pre post => cons post q
-      All n           => drop n q
-      Naught          => q
+drop k = join . drain . splitAt k
 
 ||| Perform the given action on every emitted value.
 |||
@@ -252,15 +263,32 @@ zipWithIndex = zipWithScan 0 (\n,_ => S n)
 
 ||| Like `zipWithScan` but the running total is including the current element.
 export
-zipWithScan1 : p -> (p -> o -> p) -> Stream f es o -> Stream f es (o,p)
--- zipWithScan1 vp fun =
---   mapAccumulate vp $ \vp1,vo =>
---     let vp2 := fun vp1 vo
---      in (vp2, (vo, vp2))
+zipWithScan1 :
+     p
+  -> (p -> o -> p)
+  -> Pull f (List o) es r
+  -> Pull f (List (o,p)) es r
+zipWithScan1 vp fun =
+  scan vp $ \vp1,vo => let vp2 := fun vp1 vo in ((vo, vp2),vp2)
+
+export %inline
+runningCount : Pull f (List o) es r -> Pull f (List Nat) es r
+runningCount = scan 1 (\x => const (x,S x))
 
 --------------------------------------------------------------------------------
 -- List Implementation
 --------------------------------------------------------------------------------
+
+nel : List a -> Maybe (List a)
+nel [] = Nothing
+nel xs = Just xs
+
+%inline
+len : SnocList a -> Maybe (List a)
+len = nel . (<>> [])
+
+broken : SnocList a -> List a -> BreakRes (List a)
+broken sx xs = Broken (len sx) (nel xs)
 
 unfoldList :
      SnocList o
@@ -279,17 +307,19 @@ splitAtList sx (S k) (h::t) = splitAtList (sx :< h) k t
 splitAtList sx n     []     = All n
 splitAtList sx 0     xs     = Middle (sx <>> []) xs
 
-breakList : SnocList a -> Bool -> (a -> Bool) -> List a -> BreakRes (List a)
+breakList :
+     SnocList a
+  -> BreakInstruction
+  -> (a -> Bool)
+  -> List a
+  -> BreakRes (List a)
 breakList sx b f []        = Keep (sx <>> [])
 breakList sx b f (x :: xs) =
   case f x of
     True => case b of
-      True  => case xs of
-        []  => NoPost (sx <>> [x])
-        _   => Broken (sx <>> [x]) xs
-      False => case sx of
-        [<] => NoPre (x::xs)
-        _   => Broken (sx <>> []) (x::xs)
+      TakeFailure => broken (sx :< x) xs
+      PostFailure => broken sx (x::xs)
+      DropFailure => broken sx xs
     False => breakList (sx :< x) b f xs
 
 export
@@ -314,37 +344,6 @@ Chunk (List a) a where
 
   filterChunk = filter
 
--- --------------------------------------------------------------------------------
--- -- Break
--- --------------------------------------------------------------------------------
---
---
--- chunkedGo :
---      SnocList (List a)
---   -> SnocList a
---   -> Nat
---   -> Nat
---   -> List a
---   -> List (List a)
--- chunkedGo sxs sx _  _     []     = sxs <>> [sx <>> []]
--- chunkedGo sxs sx sz 0     (h::t) = chunkedGo (sxs :< (sx <>> [])) [<h] sz sz t
--- chunkedGo sxs sx sz (S m) (h::t) = chunkedGo sxs (sx:<h) sz m t
---
--- ||| Groups a list of values into chunks of size `n`.
--- |||
--- ||| Only the last list might be shorter.
--- export
--- chunked : (n : Nat) -> (0 p : IsSucc n) => List a -> List (List a)
--- chunked _      []     = []
--- chunked (S sz) (h::t) = chunkedGo [<] [<h] sz sz t
---
--- export
--- mapAccum : SnocList p -> (s -> o -> (s,p)) -> s -> List o -> (List p,s)
--- mapAccum sx f s1 []        = (sx <>> [], s1)
--- mapAccum sx f s1 (x :: xs) =
---   let (s2,vp) := f s1 x
---    in mapAccum (sx :< vp) f s2 xs
---
 -- --------------------------------------------------------------------------------
 -- -- Zipping
 -- --------------------------------------------------------------------------------

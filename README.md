@@ -12,7 +12,7 @@ import IO.Async.Loop.Posix
 import FS.Elin as E
 import FS
 import FS.Posix
-import FS.System
+import System
 
 %default total
 
@@ -39,7 +39,7 @@ in sequence. Here's a very simple example:
 
 ```idris
 example : Stream f es Nat
-example = iterate {c = List Nat} Z S |> takeWhile (< 10_000_000) |> sum
+example = iterate {c = List _} Z S |> takeWhile (< 100_000_000) |> sum
 ```
 
 Let's break this down: `iterate Z S` generates an infinite stream of
@@ -89,7 +89,7 @@ toCelsius bs =
     Nothing => 0.0
     Just f  => (f - 32.0) * (5.0/9.0)
 
-fahrenheit : Prog ()
+fahrenheit : Prog Void
 fahrenheit =
      readBytes "resources/fahrenheit.txt"
   |> lines
@@ -123,22 +123,28 @@ as command-line arguments) and emit their content as a stream of
 -- Resources are managed automatically: Every file is closed
 -- as soon as it has been exhausted, so this can be used to
 -- stream thousands of files.
-example2 : Prog ()
-example2 =
-     tailC args
+idrisLines : Prog String -> Prog Void
+idrisLines args =
+     args
   |> observe stdoutLn
   |> bindC readBytes
   |> lines
-  |> map size
+  |> mapEl size
   |> zipWithIndex
   |> fold max (Z,Z)
-  |> map (fromString . show)
-  |> unlines
-  |> writeTo Stdout
+  |> printLnTo Stdout
+
+prog : List String -> Prog Void
+prog []     = throw EINVAL
+prog (_::t) = case t of
+  ["fahrenheit"]   => fahrenheit
+  ["example"]      => example |> printLnTo Stdout
+  "idris-lines"::t => idrisLines (emits t)
+  _                => stderrLn "Invalid commandline arguments"
 
 covering
 main : IO ()
-main = runProg fahrenheit
+main = getArgs >>= runProg . prog
 ```
 <!-- vi: filetype=idris2:syntax=markdown
 -->
