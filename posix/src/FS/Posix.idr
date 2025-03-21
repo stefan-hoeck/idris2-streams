@@ -8,9 +8,7 @@ import FS.Posix.Internal
 import FS.Pull
 
 import public IO.Async.Posix
-import public FS.Concurrent
-import public FS.Bytes
-import public FS.Pull
+import public FS
 
 import public System.Posix.Dir
 import public System.Posix.File.Stats
@@ -94,7 +92,7 @@ parameters {0    es  : List Type}
   export
   deepEntries : (pth : Path p) -> AsyncStream e es (Entry p)
   deepEntries pth =
-    assert_total $ flatMapC (entries pth) $ \e =>
+    assert_total $ flatMap (entries pth) $ \e =>
       case e.type of
         Directory => emit e >> deepEntries e.path
         _         => emit e

@@ -1,6 +1,9 @@
 module FS.Stream
---
---
+
+import FS.Pull
+
+%default total
+
 --
 -- ||| Zips each element of this stream with the previous element wrapped into `Some`.
 -- ||| The first element is zipped with `None`.

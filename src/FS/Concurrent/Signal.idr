@@ -115,4 +115,4 @@ discrete s = unfoldEval 0 (map (uncurry More). next s)
 ||| predicate returns `True`.
 export covering
 until : SignalRef a -> (a -> Bool) -> Async e [] ()
-until ref pred = discrete ref |> anyC pred |> drain |> mpull
+until ref pred = discrete ref |> any pred |> drain |> mpull

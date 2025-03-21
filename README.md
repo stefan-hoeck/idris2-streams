@@ -10,7 +10,6 @@ module README
 
 import IO.Async.Loop.Posix
 import FS.Elin as E
-import FS
 import FS.Posix
 import System
 
@@ -39,7 +38,7 @@ in sequence. Here's a very simple example:
 
 ```idris
 example : Stream f es Nat
-example = iterate {c = List _} Z S |> takeWhile (< 100_000_000) |> sum
+example = iterate (List _) Z S |> C.takeWhile (< 10_000_000) |> C.sum
 ```
 
 Let's break this down: `iterate Z S` generates an infinite stream of
@@ -93,8 +92,8 @@ fahrenheit : Prog Void
 fahrenheit =
      readBytes "resources/fahrenheit.txt"
   |> lines
-  |> filterNot (\x => null (trim x) || isPrefixOf "//" x)
-  |> mapEl (fromString . show . toCelsius)
+  |> C.filterNot (\x => null (trim x) || isPrefixOf "//" x)
+  |> C.mapOutput (fromString . show . toCelsius)
   |> unlines
   |> writeTo Stdout
 ```
@@ -127,11 +126,11 @@ idrisLines : Prog String -> Prog Void
 idrisLines args =
      args
   |> observe stdoutLn
-  |> bindC readBytes
+  |> bind readBytes
   |> lines
-  |> mapEl size
-  |> zipWithIndex
-  |> fold max (Z,Z)
+  |> C.mapOutput size
+  |> C.zipWithIndex
+  |> C.fold max (Z,Z)
   |> printLnTo Stdout
 
 prog : List String -> Prog Void

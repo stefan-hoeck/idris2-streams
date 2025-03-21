@@ -1,7 +1,12 @@
 ||| Utilities for working with chunks of data.
+|||
+||| It is suggested to import this qualified `import FS.Chunk as C` or
+||| via the catch-all module `FS` and use qualified names such
+||| as `C.filter` for those functions that overlap with the ones
+||| from `FS.Pull`.
 module FS.Chunk
 
-import FS.Pull
+import FS.Pull as P
 import Data.List
 import Data.Nat
 
@@ -58,17 +63,6 @@ data SplitRes : Type -> Type where
   Naught : SplitRes c
   All    : Nat -> SplitRes c
 
-public export
-data BreakInstruction : Type where
-  ||| Take the first failing value as part of the emitted prefix
-  TakeFailure : BreakInstruction
-
-  ||| Keep the failing value as part of the postfix.
-  PostFailure : BreakInstruction
-
-  ||| Discard the failing value
-  DropFailure : BreakInstruction
-
 ||| A `Chunk c o` is a container type `c` holding elements of type `o`.
 |||
 ||| Examples include `List a` with element type `a` and `ByteString` with
@@ -78,10 +72,10 @@ interface Chunk (0 c,o : Type) | c where
   unfoldChunk    : ChunkSize => (s ->  Either r (o,s)) -> s -> UnfoldRes r s c
   replicateChunk : ChunkSize => o -> c
   isEmpty        : c -> Bool
-  unconsChunk    : c -> Maybe (o, c)
+  unconsChunk    : c -> Maybe (o, Maybe c)
   splitChunkAt   : Nat -> c -> SplitRes c
   breakChunk     : BreakInstruction -> (o -> Bool) -> c -> BreakRes c
-  filterChunk    : (o -> Bool) -> c -> c
+  filterChunk    : (o -> Bool) -> c -> Maybe c
 
 --------------------------------------------------------------------------------
 -- Utilities
@@ -90,198 +84,267 @@ interface Chunk (0 c,o : Type) | c where
 ||| Like `unfold` but generates chunks of values of up to the given size.
 export %inline
 unfold : ChunkSize => Chunk c o => s -> (s -> Either r (o,s)) -> Pull f c es r
-unfold init g = unfoldC init (unfoldChunk g)
+unfold init g = P.unfold init (unfoldChunk g)
 
-||| Like `fill` but generates chunks of values of up to the given size.
+||| Like `P.fill` but generates chunks of values of up to the given size.
 export
-fill : ChunkSize => Chunk c o => o -> Pull f c es ()
-fill v = fillC (replicateChunk v)
+fill : ChunkSize => (0 c : _) -> Chunk c o => o -> Pull f c es ()
+fill _ v = P.fill (replicateChunk v)
 
-||| Like `iterate` but generates chunks of values of up to the given size.
+||| Like `P.iterate` but generates chunks of values of up to the given size.
 export
-iterate : ChunkSize => Chunk c o => o -> (o -> o) -> Stream f es c
-iterate v f = unfold v (\x => Right (x, f x))
+iterate : ChunkSize => (0 c : _) -> Chunk c o => o -> (o -> o) -> Stream f es c
+iterate _ v f = unfold v (\x => Right (x, f x))
 
-||| Like `replicate` but generates chunks of values of up to the given size.
+||| Like `P.replicate` but generates chunks of values of up to the given size.
 export
-replicate : ChunkSize => Chunk c o => Nat -> o -> Stream f es c
-replicate n v =
-  unfold n $ \case
+replicate : ChunkSize => (0 c : _) -> Chunk c o => Nat -> o -> Stream f es c
+replicate _ n v =
+  Chunk.unfold n $ \case
     0   => Left ()
     S k => Right (v,k)
 
-export
-consChunk : Chunk c o => c -> Pull f c es r -> Pull f c es r
-consChunk x p = if isEmpty x then p else cons x p
+--------------------------------------------------------------------------------
+-- Splitting Streams
+--------------------------------------------------------------------------------
 
-||| Splits the very value from the head of a `Pull`
-export
-unconsEl : Chunk c o => Pull f c es r -> Pull f q es (Either r (o, Pull f c es r))
-unconsEl p =
-  assert_total $ uncons p >>= \case
-    Left x => pure (Left x)
-    Right (vs,q) => case unconsChunk vs of
-      Just (el,rem) => pure $ Right (el,consChunk rem q)
-      Nothing => unconsEl q
+parameters {auto chnk : Chunk c o}
 
-||| Breaks the stream at the first element that returns `True`.
-|||
-||| The element that returned `True` will be the first element of
-||| the remainder.
-export %inline
-break : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es (Pull f c es r)
-break pred = breakPull (breakChunk PostFailure pred)
+  ||| Splits the very first element from the head of a `Pull`
+  export
+  uncons : Pull f c es r -> Pull f q es (Either r (o, Pull f c es r))
+  uncons p =
+    assert_total $ P.uncons p >>= \case
+      Left x => pure (Left x)
+      Right (vs,q) => case unconsChunk vs of
+        Just (el,rem) => pure $ Right (el,consMaybe rem q)
+        Nothing => Chunk.uncons q
 
-||| Emits elements until the given predicate returns `False`.
-export %inline
-takeWhile : Chunk c o => (o -> Bool) -> Stream f es c -> Stream f es c
-takeWhile pred = newScope . ignore . break (not . pred)
+  ||| Emits the first `n` elements of a `Pull`, returning the remainder.
+  export
+  splitAt : Nat -> Pull f c es r -> Pull f c es (Pull f c es r)
+  splitAt k p =
+    assert_total $ P.uncons p >>= \case
+      Left v      => pure (pure v)
+      Right (vs,q) => case splitChunkAt k vs of
+        Middle pre post => emit pre $> cons post q
+        All n           => emit vs >> Chunk.splitAt n q
+        Naught          => pure (cons vs q)
 
-||| Emits the first `n` elements of a `Pull`, returning the remainder.
-export
-splitAt : Chunk c o => Nat -> Pull f c es r -> Pull f c es (Pull f c es r)
-splitAt k p =
-  assert_total $ uncons p >>= \case
-    Left v      => pure (pure v)
-    Right (vs,q) => case splitChunkAt k vs of
-      Middle pre post => emit pre $> cons post q
-      All n           => emit vs >> splitAt n q
-      Naught          => pure (cons vs q)
+  ||| Emits the first `n` elements of a `Pull`, returning the remainder.
+  export %inline
+  take : Nat -> Pull f c es r -> Pull f c es ()
+  take n = ignore . newScope . Chunk.splitAt n
 
-||| Emits the first `n` elements of a `Pull`, returning the remainder.
-export %inline
-take : Chunk c o => Nat -> Pull f c es r -> Pull f c es ()
-take n = ignore . newScope . splitAt n
+  ||| Drops the first `n` elements of a `Pull`, returning the
+  ||| remainder.
+  export %inline
+  drop : Nat -> Pull f c es r -> Pull f c es r
+  drop k = join . drain . Chunk.splitAt k
 
-||| Drops the first `n` elements of a `Pull`, returning the
-||| remainder.
-export %inline
-drop : Chunk c o => Nat -> Pull f c es r -> Pull f c es r
-drop k = join . drain . splitAt k
+  ||| Emits the first element of a `Pull`, returning the remainder.
+  export %inline
+  head : Pull f c es r -> Pull f c es ()
+  head = Chunk.take 1
 
-||| Perform the given action on every emitted value.
-|||
-||| For acting on output without actually draining the stream, see
-||| `observe` and `observe1`.
-export
-foreachEl : Chunk c o => (o -> f es ()) -> Pull f c es r -> Pull f q es r
-foreachEl f p =
-  assert_total $ unconsEl p >>= \case
-    Left x      => pure x
-    Right (v,p) => exec (f v) >> foreachEl f p
+  ||| Discards the first element of a `Pull`.
+  export %inline
+  tail : Pull f c es r -> Pull f c es r
+  tail = Chunk.drop 1
+
+  ||| Breaks a pull as soon as the given predicate returns `True` for
+  ||| an emitted element.
+  |||
+  ||| The `BreakInstruction` dictates, if the value, for which the
+  ||| predicate held, should be emitted as part of the prefix or the
+  ||| suffix, or if it should be discarded.
+  export
+  breakFull :
+       BreakInstruction
+    -> (o -> Bool)
+    -> Pull f c es r
+    -> Pull f c es (Pull f c es r)
+  breakFull bi pred = breakPull (breakChunk bi pred)
+
+  ||| Emits values until the given predicate returns `True`.
+  |||
+  ||| The `BreakInstruction` dictates, if the value, for which the
+  ||| predicate held, should be emitted as part of the prefix or not.
+  export
+  takeUntil : BreakInstruction -> (o -> Bool) -> Stream f es c -> Stream f es c
+  takeUntil tf pred = ignore . newScope . Chunk.breakFull tf pred
+
+  ||| Emits values until the given predicate returns `False`,
+  ||| returning the remainder of the `Pull`.
+  export %inline
+  takeWhile : (o -> Bool) -> Stream f es c -> Stream f es c
+  takeWhile pred = Chunk.takeUntil DropHit (not . pred)
+
+  ||| Like `takeWhile` but also includes the first failure.
+  export %inline
+  takeThrough : (o -> Bool) -> Stream f es c -> Stream f es c
+  takeThrough pred = Chunk.takeUntil TakeHit (not . pred)
+
+  ||| Discards values until the given predicate returns `True`.
+  |||
+  ||| The `BreakInstruction` dictates, if the value, for which the
+  ||| predicate held, should be emitted as part of the remainder or not.
+  export
+  dropUntil : BreakInstruction -> (o -> Bool) -> Pull f c es r -> Pull f c es r
+  dropUntil tf pred = join . drain . Chunk.breakFull tf pred
+
+  ||| Drops values from a stream while the given predicate returns `True`,
+  ||| returning the remainder of the stream.
+  export %inline
+  dropWhile : (o -> Bool) -> Pull f c es r -> Pull f c es r
+  dropWhile pred = Chunk.dropUntil PostHit (not . pred)
+
+  ||| Like `dropWhile` but also drops the first value where
+  ||| the predicate returns `False`.
+  export %inline
+  dropThrough : (o -> Bool) -> Pull f c es r -> Pull f c es r
+  dropThrough pred = Chunk.dropUntil DropHit (not . pred)
 
 --------------------------------------------------------------------------------
 -- Maps and Filters
 --------------------------------------------------------------------------------
 
-||| Element-wise filtering of a stream of chunks.
+nel : List a -> Maybe (List a)
+nel [] = Nothing
+nel xs = Just xs
+
+||| Maps elements of output via a partial function.
 export
+mapMaybe : (o -> Maybe p) -> Pull f (List o) es r -> Pull f (List p) es r
+mapMaybe f = P.mapMaybe (nel . mapMaybe f)
+
+||| Element-wise filtering of a stream of chunks.
+export %inline
 filter : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es r
-filter pred =
-  mapMaybeC $ \v =>
-   let w := filterChunk pred v
-    in if isEmpty w then Nothing else Just w
+filter = P.mapMaybe . filterChunk
 
 ||| Element-wise filtering of a stream of chunks.
 export %inline
 filterNot : Chunk c o => (o -> Bool) -> Pull f c es r -> Pull f c es r
-filterNot pred = filter (not . pred)
+filterNot pred = Chunk.filter (not . pred)
 
 ||| Maps a function over all elements emitted by a pull.
 export %inline
-mapEl : Functor t => (o -> p) -> Pull f (t o) es r -> Pull f (t p) es r
-mapEl = mapC . map
-
-||| Maps a partial function over all elements emitted by a pull.
-export %inline
-mapMaybe : (o -> Maybe p) -> Pull f (List o) es r -> Pull f (List p) es r
-mapMaybe f =
-  mapMaybeC $ \vs => case mapMaybe f vs of
-    [] => Nothing
-    ws => Just ws
+mapOutput : Functor t => (o -> p) -> Pull f (t o) es r -> Pull f (t p) es r
+mapOutput = P.mapOutput . map
 
 --------------------------------------------------------------------------------
 -- Folds
 --------------------------------------------------------------------------------
 
-export %inline
-fold : Foldable t => (p -> o -> p) -> p -> Pull f (t o) es r -> Pull f p es r
-fold g = foldC (foldl g)
+parameters {auto fld : Foldable t}
 
-||| Returns `True` if all emitted values of the given stream fulfill
-||| the given predicate
-export %inline
-all : Foldable t => (o -> Bool) -> Stream f es (t o) -> Stream f es Bool
-all pred = allC (all pred)
+  export %inline
+  fold : (p -> o -> p) -> p -> Pull f (t o) es r -> Pull f p es r
+  fold g = P.fold (foldl g)
 
-||| Returns `True` if any of the emitted values of the given stream fulfills
-||| the given predicate
-export %inline
-any : Foldable t => (o -> Bool) -> Stream f es (t o) -> Stream f es Bool
-any pred = anyC (any pred)
+  ||| Like `foldC` but will not emit a value in case of an empty pull.
+  export
+  fold1 : Chunk (t o) o => (o -> o -> o) -> Pull f (t o) es r -> Pull f o es r
+  fold1 g s =
+    Chunk.uncons s >>= \case
+      Left r      => pure r
+      Right (v,q) => Chunk.fold g v q
 
-||| Emits the sum over all elements emitted by a `Pull`.
-export %inline
-sum : Foldable t => Num o => Pull f (t o) es r -> Pull f o es r
-sum = fold (+) 0
+  ||| Returns `True` if all emitted values of the given stream fulfill
+  ||| the given predicate
+  export %inline
+  all : (o -> Bool) -> Stream f es (t o) -> Stream f es Bool
+  all pred = P.all (all pred)
 
-||| Emits the number of elements emitted by a `Pull`.
-export %inline
-count : Foldable t => Pull f (t o) es r -> Pull f Nat es r
-count = fold (const . S) 0
+  ||| Returns `True` if any of the emitted values of the given stream fulfills
+  ||| the given predicate
+  export %inline
+  any : (o -> Bool) -> Stream f es (t o) -> Stream f es Bool
+  any pred = P.any (any pred)
+
+  ||| Emits the sum over all elements emitted by a `Pull`.
+  export %inline
+  sum : Num o => Pull f (t o) es r -> Pull f o es r
+  sum = Chunk.fold (+) 0
+
+  ||| Emits the number of elements emitted by a `Pull`.
+  export %inline
+  count : Pull f (t o) es r -> Pull f Nat es r
+  count = Chunk.fold (const . S) 0
+
+  ||| Emits the largest output encountered.
+  export %inline
+  maximum : Chunk (t o) o => Ord o => Pull f (t o) es r -> Pull f o es r
+  maximum = Chunk.fold1 max
+
+  ||| Emits the smallest output encountered.
+  export %inline
+  minimum : Chunk (t o) o => Ord o => Pull f (t o) es r -> Pull f o es r
+  minimum = Chunk.fold1 min
+
+  ||| Emits the smallest output encountered.
+  export %inline
+  mappend : Chunk (t o) o => Semigroup o => Pull f (t o) es r -> Pull f o es r
+  mappend = Chunk.fold1 (<+>)
+
+  ||| Accumulates the emitted values over a monoid.
+  |||
+  ||| Note: This corresponds to a left fold, so it will
+  |||       run in quadratic time for monoids that are
+  |||       naturally accumulated from the right (such as List)
+  export %inline
+  foldMap : Monoid m => (o -> m) -> Pull f (t o) es r -> Pull f m es r
+  foldMap f = Chunk.fold (\v,el => v <+> f el) neutral
 
 --------------------------------------------------------------------------------
 -- Scans
 --------------------------------------------------------------------------------
 
-||| Computes a stateful running total over all elements emitted by a
-||| pull.
-export
-scan : st -> (st -> o -> (p,st)) -> Pull f (List o) es r -> Pull f (List p) es r
-scan ini f = scanC ini (go [<])
-  where
-    go : SnocList p -> st -> List o -> (List p, st)
-    go sx cur []        = (sx <>> [], cur)
-    go sx cur (x :: xs) = let (y,c2) := f cur x in go (sx:<y) c2 xs
+public export
+interface Functor f => Scan f where
+  scanChunk : (s -> o -> (p,s)) -> s -> f o -> (f p, s)
 
-||| Zips the input with a running total according to `s`, up to but
-||| not including the current element. Thus the initial
-||| `vp` value is the first emitted to the output:
-export
-zipWithScan :
-     p
-  -> (p -> o -> p)
-  -> Pull f (List o) es r
-  -> Pull f (List (o,p)) es r
-zipWithScan vp fun =
-  scan vp $ \vp1,vo => let vp2 := fun vp1 vo in ((vo, vp1),vp2)
+parameters {auto sca : Scan t}
 
-||| Pairs each element in the stream with its 0-based index.
-export %inline
-zipWithIndex : Pull f (List o) es r -> Pull f (List (o,Nat)) es r
-zipWithIndex = zipWithScan 0 (\n,_ => S n)
+  ||| Computes a stateful running total over all elements emitted by a
+  ||| pull.
+  export %inline
+  scan : s -> (s -> o -> (p,s)) -> Pull f (t o) es r -> Pull f (t p) es r
+  scan ini f = P.scan ini (scanChunk f)
 
-||| Like `zipWithScan` but the running total is including the current element.
-export
-zipWithScan1 :
-     p
-  -> (p -> o -> p)
-  -> Pull f (List o) es r
-  -> Pull f (List (o,p)) es r
-zipWithScan1 vp fun =
-  scan vp $ \vp1,vo => let vp2 := fun vp1 vo in ((vo, vp2),vp2)
+  ||| Zips the input with a running total according to `s`, up to but
+  ||| not including the current element. Thus the initial
+  ||| `vp` value is the first emitted to the output:
+  export
+  zipWithScan : p -> (p -> o -> p) -> Pull f (t o) es r -> Pull f (t (o,p)) es r
+  zipWithScan vp fun =
+    Chunk.scan vp $ \vp1,vo => let vp2 := fun vp1 vo in ((vo, vp1),vp2)
 
-export %inline
-runningCount : Pull f (List o) es r -> Pull f (List Nat) es r
-runningCount = scan 1 (\x => const (x,S x))
+  ||| Like `zipWithScan` but the running total is including the current element.
+  export
+  zipWithScan1 : p -> (p -> o -> p) -> Pull f (t o) es r -> Pull f (t (o,p)) es r
+  zipWithScan1 vp fun =
+    Chunk.scan vp $ \vp1,vo => let vp2 := fun vp1 vo in ((vo, vp2),vp2)
+
+  ||| Pairs each element in the stream with its 0-based index.
+  export %inline
+  zipWithIndex : Pull f (t o) es r -> Pull f (t (o,Nat)) es r
+  zipWithIndex = Chunk.zipWithScan 0 (\n,_ => S n)
+
+  ||| Pairs each element in the stream with its 1-based count.
+  export %inline
+  zipWithCount : Pull f (t o) es r -> Pull f (t (o,Nat)) es r
+  zipWithCount = Chunk.zipWithScan 1 (\n,_ => S n)
+
+  ||| Emits the count of each element.
+  export %inline
+  runningCount : Pull f (t o) es r -> Pull f (t Nat) es r
+  runningCount = Chunk.scan 1 (\n,_ => (n, S n))
 
 --------------------------------------------------------------------------------
 -- List Implementation
 --------------------------------------------------------------------------------
-
-nel : List a -> Maybe (List a)
-nel [] = Nothing
-nel xs = Just xs
 
 %inline
 len : SnocList a -> Maybe (List a)
@@ -317,9 +380,9 @@ breakList sx b f []        = Keep (sx <>> [])
 breakList sx b f (x :: xs) =
   case f x of
     True => case b of
-      TakeFailure => broken (sx :< x) xs
-      PostFailure => broken sx (x::xs)
-      DropFailure => broken sx xs
+      TakeHit => broken (sx :< x) xs
+      PostHit => broken sx (x::xs)
+      DropHit => broken sx xs
     False => breakList (sx :< x) b f xs
 
 export
@@ -335,18 +398,28 @@ Chunk (List a) a where
   isEmpty _  = False
 
   unconsChunk []     = Nothing
-  unconsChunk (h::t) = Just (h,t)
+  unconsChunk (h::t) = Just (h, nel t)
 
   splitChunkAt 0 _  = Naught
   splitChunkAt n xs = splitAtList [<] n xs
 
   breakChunk = breakList [<]
 
-  filterChunk = filter
+  filterChunk pred = nel . filter pred
 
--- --------------------------------------------------------------------------------
--- -- Zipping
--- --------------------------------------------------------------------------------
+scanListImpl : SnocList p -> (s -> o -> (p,s)) -> s -> List o -> (List p,s)
+scanListImpl sx f v []        = (sx <>> [], v)
+scanListImpl sx f v (x :: xs) =
+  let (vp,v2) := f v x
+  in scanListImpl (sx :< vp) f v2 xs
+
+export
+Scan List where
+  scanChunk = scanListImpl [<]
+
+--------------------------------------------------------------------------------
+-- Zipping
+--------------------------------------------------------------------------------
 --
 -- public export
 -- data ZipRes : (a,b,c : Type) -> Type where

@@ -5,10 +5,7 @@ module HTTP
 
 import Data.SortedMap
 import Derive.Prelude
-import FS.Concurrent
 import FS.Posix
-import FS.Pull
-import FS.Stream
 
 import IO.Async.Loop.Posix
 

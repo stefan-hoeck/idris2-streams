@@ -8,8 +8,6 @@ import Data.FilePath
 import Data.String
 import Data.Vect
 
-import FS
-import FS.Chunk
 import FS.Posix
 import FS.Posix.Internal
 import FS.Socket
@@ -30,33 +28,33 @@ runProg prog = epollApp $ mpull (handle [stderrLn . interpolate] prog)
 ```
 
 ```idris
-counter : Prog es (List Nat)
-counter = runningCount $ repeat (delayed 10.ms [()])
+counter : Prog es Nat
+counter = P.runningCount $ repeat (delayed 10.ms ())
 
 prog1 : Prog [Errno] Void
-prog1 = timeout 5.s counter |> takeC 1000000 |> printLnTo Stdout
+prog1 = timeout 5.s counter |> P.take 1000000 |> printLnTo Stdout
 
 prog2 : Prog [Errno] ByteString
-prog2 = takeWhileC (not . null) (repeat ask) <+> stdoutLn "Time's up! Goodbye!"
+prog2 = P.takeWhile (not . null) (repeat ask) <+> stdoutLn "Time's up! Goodbye!"
   where
     ask : Prog [Errno] ByteString
     ask = do
       stdoutLn "Please enter your name:"
-      takeC 1 $ timeout 5.s (bytes Stdin 0xff) <+> emit empty
+      P.take 1 $ timeout 5.s (bytes Stdin 0xff) <+> emit empty
 
 pretty: ((Nat,Nat), Nat) -> String
 pretty ((ix,c),tot) =
   "Stream: \{show ix}; Count: \{padLeft 3 ' ' $ show c}; Total: \{padLeft 3 ' ' $ show tot}"
 
 tick : Nat -> Clock Duration -> Prog [Errno] (List (Nat,Nat))
-tick ix dur = zipWithIndex (repeat $ delayed dur [ix])
+tick ix dur = C.zipWithIndex (repeat $ delayed dur [ix])
 
 prog3 : Prog [Errno] Void
 prog3 =
      merge [ tick 1 100.ms, tick 2 700.ms, tick 3 1500.ms, tick 4 300.ms ]
-  |> zipWithIndex
-  |> mapEl pretty
-  |> take 1000
+  |> C.zipWithIndex
+  |> C.mapOutput pretty
+  |> C.take 1000
   |> timeout 10.s
   |> printLnsTo Stdout
 
@@ -95,7 +93,8 @@ serve cli =
     |> writeTo cli
 
 echo : Bits16 -> (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] Void
-echo port n = parJoin n (mapC serve $ acceptOn AF_INET SOCK_STREAM (addr port))
+echo port n =
+  parJoin n (mapOutput serve $ acceptOn AF_INET SOCK_STREAM (addr port))
 
 connectTo :
      (d : Domain)
@@ -110,31 +109,31 @@ connectTo d t addr = do
 cli : Bits16 -> Prog [Errno] (Either Errno ByteString)
 cli port =
   handleErrors handler $
-    Pull.bracket
+    bracket
       (connectTo AF_INET SOCK_STREAM $ addr port)
       (\cl => close' cl) $ \cl =>
            (eval $ fwritenb cl "hello from \{show $ fileDesc cl}\n:q\n")
-        |> bindC (\_ => bytes cl 0xff)
-        |> mapC Right
+        |> P.bind (\_ => bytes cl 0xff)
+        |> P.mapOutput Right
 
 echoCli : Bits16 -> (n, tot : Nat) -> (0 p : IsSucc n) => Prog [Errno] Void
-echoCli port n tot = parJoin n (replicateC tot $ cli port) |> foreach logRes
+echoCli port n tot = parJoin n (P.replicate tot $ cli port) |> foreach logRes
 
 nats : Stream f es (List Nat)
-nats = iterate 0 S
+nats = C.iterate _ 0 S
 
 range : Nat -> Stream f es (List Nat)
-range n = take n nats
+range n = C.take n nats
 
 emitted : List (Nat,Nat) -> Async Poll es ()
 emitted (h::t) = putStrLn "emitting \{show h}"
 emitted _      = putStrLn "empty chunk"
 
 test : (n, par : Nat) -> (0 p : IsSucc par) => Prog [Errno] Void
-test n (S par) = merge (innerRange <$> [0..par]) |> countC |> printLnTo Stdout
+test n (S par) = merge (innerRange <$> [0..par]) |> C.count |> printLnTo Stdout
   where
     innerRange : Nat -> Prog es (List (Nat,Nat))
-    innerRange x = mapEl (,x) (range n)
+    innerRange x = C.mapOutput (,x) (range n)
 
 prog : List String -> Prog [Errno] Void
 prog ["server", port, n] =

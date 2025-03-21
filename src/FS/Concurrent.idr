@@ -15,6 +15,7 @@ import Data.Nat
 import FS.Concurrent.Signal
 import FS.Concurrent.Util
 import FS.Pull
+import FS.Resource
 import FS.Scope
 
 import IO.Async.BQueue
@@ -22,7 +23,6 @@ import IO.Async.Channel
 import IO.Async.Loop.TimerH
 import IO.Async.Semaphore
 
-import public FS.Stream
 import public IO.Async
 
 %default total
@@ -158,7 +158,7 @@ merge ss  = Prelude.do
 export
 mergeHaltL : (s1,s2 : AsyncStream e es o) -> AsyncStream e es o
 mergeHaltL s1 s2 =
-  takeWhileJust $ merge [endWithNothing s1, mapC Just s2]
+  takeWhileJust $ merge [endWithNothing s1, mapOutput Just s2]
 
 ||| Runs the given streams in parallel and nondeterministically interleaves
 ||| their output.
