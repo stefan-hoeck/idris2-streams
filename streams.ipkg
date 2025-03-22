@@ -11,11 +11,12 @@ depends    = base         >= 0.7.0
 
 modules = FS
         , FS.Bytes
+        , FS.Chunk
+        , FS.Core
         , FS.Elin
-        , FS.ChunkSize
         , FS.Pull
+        , FS.Resource
         , FS.Scope
-        , FS.Stream
         , FS.System
 
         , FS.Concurrent
@@ -23,4 +24,3 @@ modules = FS
         , FS.Concurrent.Util
 
         , FS.Internal.Bytes
-        , FS.Internal.Chunk

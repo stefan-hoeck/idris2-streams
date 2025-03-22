@@ -17,8 +17,8 @@ parameters {auto fid : FileDesc a}
 
   ||| Writes a chunk of data
   export
-  writeAll : Cast r ByteString => List r -> Async e es (List ())
-  writeAll = ($> []) . go [<]
+  writeAll : Cast r ByteString => List r -> Async e es ()
+  writeAll = go [<]
     where
       go : SnocList ByteString -> List r -> Async e es ()
       go sx []        = bytes sx
@@ -30,8 +30,8 @@ parameters {auto fid : FileDesc a}
   ||| Writes a chunk of data, inserting a newline character (`0x0a`)
   ||| after every item.
   export
-  writeLines : Cast r ByteString => List r -> Async e es (List ())
-  writeLines = ($> []) . go [<]
+  writeLines : Cast r ByteString => List r -> Async e es ()
+  writeLines = go [<]
     where
       go : SnocList ByteString -> List r -> Async e es ()
       go sx []        = bytes sx

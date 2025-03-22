@@ -10,10 +10,12 @@ module FS.Concurrent
 import Data.Linear.Deferred
 import Data.Linear.Ref1
 import Data.Maybe
+import Data.Nat
 
 import FS.Concurrent.Signal
 import FS.Concurrent.Util
 import FS.Pull
+import FS.Resource
 import FS.Scope
 
 import IO.Async.BQueue
@@ -21,7 +23,6 @@ import IO.Async.Channel
 import IO.Async.Loop.TimerH
 import IO.Async.Semaphore
 
-import public FS.Stream
 import public IO.Async
 
 %default total
@@ -44,64 +45,44 @@ sleep = exec . sleep
 ||| Emits the given value after a delay of the given duration.
 export %inline
 delayed : TimerH e => Clock Duration -> o -> AsyncStream e es o
-delayed dur v = sleep dur <+> pure v
+delayed dur v = sleep dur <+> emit v
 
 --------------------------------------------------------------------------------
 -- Streams from Concurrency Primitives
 --------------------------------------------------------------------------------
 
-||| Converts a bounded queue of chunks into an infinite stream
+||| Converts a bounded queue of values into an infinite stream
 ||| of values.
 export %inline
-dequeue : BQueue (List o) -> AsyncStream e es o
-dequeue = repeat . evals . dequeue
+dequeue : BQueue o -> AsyncStream e es o
+dequeue = repeat . eval . dequeue
 
 ||| Converts a channel of chunks into an infinite stream of values.
 export %inline
-receive : Channel (List o) -> AsyncStream e es o
-receive = unfoldEvalChunk . receive
+receive : Channel o -> AsyncStream e es o
+receive = unfoldEvalMaybe . receive
 
 --------------------------------------------------------------------------------
 -- Interrupting Streams
 --------------------------------------------------------------------------------
 
-||| Interrupts the given stream when the given asynchronous
-||| computation completes.
-export %inline
-interruptOn : Deferred World a -> AsyncStream e es o -> AsyncStream e es o
-interruptOn check (S p) = S (interruptPull check p)
-
-||| Runs the first stream until it terminates or the second
-||| stream emits a `True`.
-export
-interruptWhen :
-     AsyncStream e es o
-  -> AsyncStream e [] Bool
-  -> AsyncStream e es o
-interruptWhen str stop = do
-  sc <- currentScope
-  force $ do
-    doneL <- deferredOf ()
-    doneR <- deferredOf ()
-    let watcher := foreachChunk (\_ => putDeferred doneR ()) (any id stop)
-    pure $ bracket
-      (assert_total $ parrun sc doneL (pure ()) watcher)
-      (\f => putDeferred doneL () >> wait f)
-      (\_ => interruptOn doneR str)
-
 ||| Runs the given stream until the given duration expires.
 export
-timeout : TimerH e => Clock Duration -> AsyncStream e es o -> AsyncStream e es o
-timeout dur str = S $ do
+timeout :
+     {auto th : TimerH e}
+  -> Clock Duration
+  -> AsyncStream e es o
+  -> AsyncStream e es o
+timeout dur str = do
   def <- deferredOf ()
   _   <- acquire (start {es = []} $ sleep dur >> putDeferred def ()) cancel
-  pull (interruptOn def str)
+  interruptOn def str
 
 --------------------------------------------------------------------------------
 -- Merging Streams
 --------------------------------------------------------------------------------
 
-parameters (chnl : Channel (List o))
+parameters (chnl : Channel o)
            (done : Deferred World ())
            (res  : Deferred World (Result es ()))
            (sema : IORef Nat)
@@ -125,7 +106,7 @@ parameters (chnl : Channel (List o))
   -- The running input stream writes all chunks of output to the channel.
   covering
   child : AsyncStream e es o -> Async e es (Fiber [] ())
-  child s = foreachChunk (ignore . send chnl) s |> parrunCase sc done out
+  child s = foreach (ignore . send chnl) s |> parrunCase sc done out
 
   -- starts running all input streams in parallel, and reads chunks of
   -- output from the bounded queue `que`.
@@ -147,35 +128,37 @@ parameters (chnl : Channel (List o))
 export
 merge : List (AsyncStream e es o) -> AsyncStream e es o
 merge []  = neutral
+merge [s] = s
 merge ss  = Prelude.do
-  sc <- currentScope
-  force $ Prelude.do
-    -- A bounded queue where the running streams will write their output
-    -- to. There will be no buffering: evaluating the streams will block
-    -- until then next chunk of ouptut has been requested by the consumer.
-    chnl <- channelOf (List o) 0
+  sc <- scope
+  -- A bounded queue where the running streams will write their output
+  -- to. There will be no buffering: evaluating the streams will block
+  -- until then next chunk of ouptut has been requested by the consumer.
+  chnl <- channelOf o 0
 
-    -- Signals the exhaustion of the output stream, which will cause all
-    -- input streams to be interrupted.
-    done <- deferredOf {s = World} ()
+  -- Signals the exhaustion of the output stream, which will cause all
+  -- input streams to be interrupted.
+  done <- deferredOf {s = World} ()
 
-    -- Signals the termination of the input streams. This will be set as
-    -- soon as one input stream throws an error, or after all input
-    -- streams terminated successfully.
-    res  <- deferredOf {s = World} (Result es ())
+  -- Signals the termination of the input streams. This will be set as
+  -- soon as one input stream throws an error, or after all input
+  -- streams terminated successfully.
+  res  <- deferredOf {s = World} (Result es ())
 
-    -- Semaphore-like counter keeping track of the number of input streams
-    -- that are still running.
-    sema <- newref (length ss)
-    pure (merged chnl done res sema sc ss)
+  -- Semaphore-like counter keeping track of the number of input streams
+  -- that are still running.
+  sema <- newref (length ss)
+
+  merged chnl done res sema sc ss
 
 ||| Runs the given streams in parallel and nondeterministically interleaves
 ||| their output.
 |||
 ||| This will terminate as soon as the first string is exhausted.
 export
-mergeHaltL : (s1,s2 : AsyncStream  e es o) -> AsyncStream e es o
-mergeHaltL s1 s2 = takeWhileJust $ merge [endWithNothing s1, map Just s2]
+mergeHaltL : (s1,s2 : AsyncStream e es o) -> AsyncStream e es o
+mergeHaltL s1 s2 =
+  takeWhileJust $ merge [endWithNothing s1, mapOutput Just s2]
 
 ||| Runs the given streams in parallel and nondeterministically interleaves
 ||| their output.
@@ -194,7 +177,7 @@ mergeHaltBoth s1 s2 =
 parameters (done      : Deferred World (Result es ()))
            (available : Semaphore)
            (running   : SignalRef Nat)
-           (output    : Channel (List o))
+           (output    : Channel o)
            (sc        : Scope (Async e))
 
   -- Every time an inner or the outer stream terminates, the number
@@ -221,18 +204,17 @@ parameters (done      : Deferred World (Result es ()))
       poll $ ignore $ parrunCase sc
         done
         (\o => putErr done o >> decRunning >> release available)
-        (foreachChunk (ignore . send output) s)
+        (foreach (ignore . send output) s)
 
   -- Runs the outer stream on its own fiber until it terminates gracefully
   -- or fails with an error.
   -- The stream is interrupted as soon as the `done` flag is set.
-  covering
   outer : AsyncStream e es (AsyncStream e es o) -> Async e es (Fiber [] ())
   outer ss =
-    parrunCase sc
+    assert_total $ parrunCase sc
       done
       (\o => putErr done o >> decRunning >> until running (== 0))
-      (foreach (inner . scope) ss)
+      (foreach (inner . newScope) ss)
 
 ||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
 ||| opening at most `maxOpen` streams at any point in time.
@@ -262,27 +244,27 @@ parJoin :
   -> (outer      : AsyncStream e es (AsyncStream e es o))
   -> AsyncStream e es o
 parJoin maxOpen out = do
-  sc <- currentScope
-  assert_total $ force $ do
-    -- signals exhaustion of the output stream (for instance, due
-    -- to a `take n`). It will interrupt evaluation of the
-    -- input stream and all child streams.
-    done      <- deferredOf {s = World} (Result es ())
+  sc <- scope
 
-    -- concurrent slots available. child streams will wait on this
-    -- before being started.
-    available <- semaphore maxOpen
+  -- signals exhaustion of the output stream (for instance, due
+  -- to a `take n`). It will interrupt evaluation of the
+  -- input stream and all child streams.
+  done      <- deferredOf {s = World} (Result es ())
 
-    running   <- signal 1
+  -- concurrent slots available. child streams will wait on this
+  -- before being started.
+  available <- semaphore maxOpen
 
-    -- the input channel used for the result stream. it will be
-    -- closed when the last child was exhausted.
-    output    <- channelOf (List o) 0
+  running   <- signal 1
 
-    fbr       <- outer done available running output sc out
-    -- the resulting stream should cleanup resources when it is done.
-    -- it should also finalize `done`.
-    pure $
-      finally
-        (putDeferred done (Right ()) >> wait fbr)
-        (interruptOn done (receive output))
+  -- the input channel used for the result stream. it will be
+  -- closed when the last child was exhausted.
+  output    <- channelOf o 0
+
+  fbr       <- exec $ outer done available running output sc out
+  -- the resulting stream should cleanup resources when it is done.
+  -- it should also finalize `done`.
+
+  finally
+    (putDeferred done (Right ()) >> wait fbr)
+    (interruptOn done (receive output))

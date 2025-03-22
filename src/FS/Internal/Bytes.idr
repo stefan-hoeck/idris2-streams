@@ -6,6 +6,11 @@ import Data.ByteVect
 
 %default total
 
+export
+nonEmpty : ByteString -> Maybe ByteString
+nonEmpty (BS 0 _) = Nothing
+nonEmpty bs       = Just bs
+
 public export
 0 SnocBytes : Type
 SnocBytes = SnocList ByteString
@@ -18,22 +23,18 @@ export
 nl : ByteString
 nl = singleton 0x0a
 
-
-ls : SnocBytes -> (n : Nat) -> ByteVect n -> (SnocBytes, ByteString)
+ls : SnocBytes -> (n : Nat) -> ByteVect n -> (Bytes, ByteString)
 ls sb n bs = case breakNL bs of
-  MkBreakRes l1 0      b1 _  prf => (sb, BS l1 b1)
+  MkBreakRes l1 0      b1 _  prf => (sb <>> [], BS l1 b1)
   MkBreakRes l1 (S l2) b1 b2 prf =>
     ls (sb :< BS l1 b1) (assert_smaller n l2) (tail b2)
 
 export
-splitNL : SnocBytes -> ByteString -> Bytes -> (Bytes, ByteString)
-splitNL sx x [] = (sx <>> [], x)
-splitNL sx x (BS n bs :: bss) =
+splitNL : ByteString -> ByteString -> (Bytes, ByteString)
+splitNL x (BS n bs) =
   case breakNL bs of
-    MkBreakRes l1 0      b1 _  prf => splitNL sx (x <+> BS l1 b1) bss
-    MkBreakRes l1 (S l2) b1 b2 prf =>
-      let (sx2,x2) := ls (sx :< (x <+> BS l1 b1)) l2 (tail b2)
-       in splitNL sx2 x2 bss
+    MkBreakRes l1 0      b1 _  prf => ([], x <+> BS l1 b1)
+    MkBreakRes l1 (S l2) b1 b2 prf => ls [<x <+> BS l1 b1] l2 (tail b2)
 
 namespace UTF8
   ||| The number of continuation bytes following a UTF-8 leading byte.
@@ -58,23 +59,22 @@ namespace UTF8
     -> (k : Nat)
     -> ByteVect n
     -> {auto 0 p : LTE k n}
-    -> Maybe (ByteString,ByteString,Nat)
-  splitLeading 0     x = Nothing
+    -> (ByteString,ByteString)
+  splitLeading 0     x = (empty, BS _ x)
   splitLeading (S k) x =
     case continuationBytes (atNat x k) of
       Nothing  => splitLeading k x
-      (Just y) => Just (BS _ $ take k x, BS _ $ drop k x, S y)
+      Just y   =>
+        if S k + y == n
+           then (BS _ x, empty)
+           else (BS _ $ take k x, BS _ $ drop k x)
 
   ||| Breaks a list of byte vectors at the last incomplete UTF-8 codepoint
   ||| The first list is a concatenation of all the complete UTF-8 strings,
   ||| while the second list contains the last incomplete codepoint (in case
   ||| of a valid UTF-8 string, the second list holds at most 3 bytes).
   export
-  breakAtLastIncomplete : Bytes -> Nat -> SnocBytes -> (Bytes,Bytes)
-  breakAtLastIncomplete post n [<]        = ([], post)
-  breakAtLastIncomplete post n (pre:<lst@(BS sz bv)) =
-    case splitLeading sz bv of
-      Nothing => breakAtLastIncomplete (lst :: post) (n + size lst) pre
-      Just (prel,postl,trailing) => case trailing <= n + size postl of
-        True  => ([fastConcat $ pre <>> (lst::post)], [])
-        False => ([fastConcat $ pre <>> [prel]], postl::post)
+  breakAtLastIncomplete : ByteString -> ByteString -> (ByteString, ByteString)
+  breakAtLastIncomplete pre cur =
+    let BS sz bv := pre <+> cur
+     in splitLeading sz bv

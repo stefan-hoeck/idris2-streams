@@ -10,9 +10,8 @@ module README
 
 import IO.Async.Loop.Posix
 import FS.Elin as E
-import FS.Stream as S
 import FS.Posix
-import FS.System
+import System
 
 %default total
 
@@ -20,9 +19,9 @@ import FS.System
 Prog = AsyncStream Poll [Errno]
 
 covering
-runProg : Prog () -> IO ()
+runProg : Prog Void -> IO ()
 runProg prog =
-  simpleApp $ run (handle [eval . stderrLn . interpolate] prog)
+  simpleApp $ mpull (handle [stderrLn . interpolate] prog)
 ```
 
 ## Streams of Data
@@ -39,7 +38,7 @@ in sequence. Here's a very simple example:
 
 ```idris
 example : Stream f es Nat
-example = iterate Z S |> takeWhile (< 10_000_000) |> sum
+example = iterate (List _) Z S |> C.takeWhile (< 10_000_000) |> C.sum
 ```
 
 Let's break this down: `iterate Z S` generates an infinite stream of
@@ -57,7 +56,7 @@ logging the generated values to `stdout`:
 ```idris
 covering
 runExample : IO ()
-runExample = runProg (example |> printLnTo Stdout)
+runExample = runProg (foreach prntLn example)
 ```
 
 If you run the above (for instance, at the REPL by invoking `:exec runExample`),
@@ -89,13 +88,14 @@ toCelsius bs =
     Nothing => 0.0
     Just f  => (f - 32.0) * (5.0/9.0)
 
-fahrenheit : Prog ()
+fahrenheit : Prog Void
 fahrenheit =
      readBytes "resources/fahrenheit.txt"
   |> lines
-  |> filterNot (\x => null (trim x) || isPrefixOf "//" x)
-  |> map toCelsius
-  |> printLnTo Stdout
+  |> C.filterNot (\x => null (trim x) || isPrefixOf "//" x)
+  |> C.mapOutput (fromString . show . toCelsius)
+  |> unlines
+  |> writeTo Stdout
 ```
 
 The above will convert every line in file `resources/fahrenheit.txt`
@@ -122,22 +122,28 @@ as command-line arguments) and emit their content as a stream of
 -- Resources are managed automatically: Every file is closed
 -- as soon as it has been exhausted, so this can be used to
 -- stream thousands of files.
-example2 : Prog ()
-example2 =
-     tail args
+idrisLines : Prog String -> Prog Void
+idrisLines args =
+     args
   |> observe stdoutLn
-  |> (>>= readBytes)
+  |> bind readBytes
   |> lines
-  |> map size
-  |> zipWithIndex
-  |> fold (Z,Z) max
-  |> map (fromString . show)
-  |> unlines
-  |> writeTo Stdout
+  |> C.mapOutput size
+  |> C.zipWithIndex
+  |> C.fold max (Z,Z)
+  |> printLnTo Stdout
+
+prog : List String -> Prog Void
+prog []     = throw EINVAL
+prog (_::t) = case t of
+  ["fahrenheit"]   => fahrenheit
+  ["example"]      => example |> printLnTo Stdout
+  "idris-lines"::t => idrisLines (emits t)
+  _                => stderrLn "Invalid commandline arguments"
 
 covering
 main : IO ()
-main = runProg fahrenheit
+main = getArgs >>= runProg . prog
 ```
 <!-- vi: filetype=idris2:syntax=markdown
 -->
