@@ -10,6 +10,32 @@ import FS.Elin as E
 import public Test.FS.Util
 
 --------------------------------------------------------------------------------
+-- Effectful utilities
+--------------------------------------------------------------------------------
+
+add1 : Bits8 -> Elin s es Bits8
+add1 n = do
+  ref <- newref n
+  mod ref (+1)
+  readref ref
+
+nextVal : List a -> UnfoldRes () (List a) a
+nextVal []     = Done ()
+nextVal [h]    = Last () h
+nextVal (h::t) = More h t
+
+nextEval : List Bits8 -> Elin s es (UnfoldRes () (List Bits8) Bits8)
+nextEval []     = pure $ Done ()
+nextEval [h]    = Last () <$> add1 h
+nextEval (h::t) = (`More` t) <$> add1 h
+
+nextMaybe : Ref s (List a) -> Elin s es (Maybe a)
+nextMaybe ref = do
+  h::t <- readref ref | [] => pure Nothing
+  writeref ref t
+  pure (Just h)
+
+--------------------------------------------------------------------------------
 -- Properties
 --------------------------------------------------------------------------------
 
@@ -25,155 +51,74 @@ prop_emits =
     vs <- forAll byteLists
     E.toList (emits vs) === vs
 
+prop_emitList : Property
+prop_emitList =
+  property $ do
+    vs <- forAll byteLists
+    case vs of
+      [] => E.toList (emitList vs) === []
+      xs => E.toList (emitList vs) === [vs]
+
+prop_emitMaybe : Property
+prop_emitMaybe =
+  property $ do
+    vs <- forAll (maybe bytes)
+    E.toList (emitMaybe vs) === toList vs
+
+prop_eval : Property
+prop_eval =
+  property $ do
+    v <- forAll bytes
+    E.toList (eval $ add1 v) === [v+1]
+
 prop_unfold : Property
 prop_unfold =
   property $ do
     vs <- forAll byteLists
-    E.toList (unfold vs next) === vs
-
-  where
-    next : List a -> UnfoldRes () (List a) a
-    next []     = Done ()
-    next [h]    = Last () h
-    next (h::t) = More h t
+    E.toList (unfold vs nextVal) === vs
 
 prop_unfoldEval : Property
 prop_unfoldEval =
   property $ do
     vs <- forAll byteLists
-    E.toList (unfoldEval vs next) === vs
-
-  where
-    next : List a -> Elin s es (UnfoldRes () (List a) a)
-    next []     = pure $ Done ()
-    next [h]    = pure $ Last () h
-    next (h::t) = pure $ More h t
+    E.toList (unfoldEval vs nextEval) === map (+1) vs
 
 prop_unfoldEvalMaybe : Property
 prop_unfoldEvalMaybe =
   property $ do
     vs <- forAll byteLists
-    E.toList (exec (newref vs) >>= unfoldEvalMaybe . next) === vs
+    E.toList (exec (newref vs) >>= unfoldEvalMaybe . nextMaybe) === vs
 
-  where
-    next : Ref s (List a) -> Elin s es (Maybe a)
-    next ref = do
-      h::t <- readref ref | [] => pure Nothing
-      writeref ref t
-      pure (Just h)
+prop_fill : Property
+prop_fill =
+  property $ do
+    [n,v] <- forAll $ hlist [smallNats, bytes]
+    E.toList (take n $ fill v) === replicate n v
 
--- prop_unfoldChunk : Property
--- prop_unfoldChunk =
---   property $ do
---     n <- forAll posNats
---     pullChunks (unfoldChunk n next) === map (\x => replicate x x) [n..1]
---
---   where
---     next : Nat -> (List Nat, Either () Nat)
---     next 0       = ([], Left ())
---     next n@(S k) = (replicate n n, Right k)
---
--- prop_unfoldChunkMaybe : Property
--- prop_unfoldChunkMaybe =
---   property $ do
---     n <- forAll posNats
---     pullChunks (unfoldChunkMaybe n next) === map (\x => replicate x x) [n..1]
---
---   where
---     next : Nat -> (List Nat, Maybe Nat)
---     next 0       = ([], Nothing)
---     next n@(S k) = (replicate n n, Just k)
---
--- prop_unfold : Property
--- prop_unfold =
---   property $ do
---     n <- forAll posNats
---     pullList (unfold n next) === map (\x => x * x) [n..1]
---   where
---     next : Nat -> Either () (Nat,Nat)
---     next 0       = Left ()
---     next n@(S k) = Right (n*n,k)
---
--- prop_unfoldAsChunks : Property
--- prop_unfoldAsChunks =
---   property $ do
---     [cs,n] <- forAll $ hlist [chunkSizes, posNats]
---     pullChunks (unfold @{cs} n next) === chunkedCS cs (map (\x => x * x) [n..1])
---   where
---     next : Nat -> Either () (Nat,Nat)
---     next 0       = Left ()
---     next n@(S k) = Right (n*n,k)
---
--- prop_unfoldMaybe : Property
--- prop_unfoldMaybe =
---   property $ do
---     n <- forAll posNats
---     pullList (unfoldMaybe n next) === map (\x => x * x) [n..1]
---
---   where
---     next : Nat -> Maybe (Nat,Nat)
---     next 0       = Nothing
---     next n@(S k) = Just (n*n,k)
---
--- prop_unfoldMaybeAsChunks : Property
--- prop_unfoldMaybeAsChunks =
---   property $ do
---     [cs,n] <- forAll $ hlist [chunkSizes, posNats]
---     pullChunks (unfoldMaybe @{cs} n next) === chunkedCS cs (map (\x => x * x) [n..1])
---
---   where
---     next : Nat -> Maybe (Nat,Nat)
---     next 0       = Nothing
---     next n@(S k) = Just (n*n,k)
---
--- prop_fill : Property
--- prop_fill =
---   property $ do
---     [n,v] <- forAll $ hlist [smallNats, bytes]
---     pullList (ignore $ take n $ fill v) === replicate n v
---
--- prop_fillChunks : Property
--- prop_fillChunks =
---   property $ do
---     [cs, n,v] <- forAll $ hlist [chunkSizes, smallNats, bytes]
---     pullChunks (ignore $ take n $ fill @{cs} v) === chunkedCS cs (replicate n v)
---
--- prop_iterate : Property
--- prop_iterate =
---   property $ do
---     n <- forAll posNats
---     pullList (ignore $ take n $ iterate 0 S) === [0..pred n]
---
--- prop_iterateChunks : Property
--- prop_iterateChunks =
---   property $ do
---     [cs,n] <- forAll $ hlist [chunkSizes, posNats]
---     pullChunks (ignore $ take n $ iterate @{cs} 0 S) === chunkedCS cs [0..pred n]
---
--- prop_replicate : Property
--- prop_replicate =
---   property $ do
---     [n,v] <- forAll $ hlist [smallNats, bytes]
---     pullList (replicate n v) === replicate n v
---
--- prop_replicateChunks : Property
--- prop_replicateChunks =
---   property $ do
---     [cs,n,v] <- forAll $ hlist [chunkSizes, smallNats, bytes]
---     pullChunks (replicate @{cs} n v) === chunkedCS cs (replicate n v)
---
--- prop_fromChunks : Property
--- prop_fromChunks =
---   property $ do
---     vss <- forAll byteChunks
---     pullChunks (fromChunks vss) === nonEmpty vss
---
--- prop_cons : Property
--- prop_cons =
---   property $ do
---     [vs,vss] <- forAll $ hlist [byteLists, byteChunks]
---     pullChunks (cons vs $ fromChunks vss) === nonEmpty (vs::vss)
---
+prop_iterate : Property
+prop_iterate =
+  property $ do
+    n <- forAll posNats
+    E.toList (take n $ iterate 0 S) === [0..pred n]
+
+prop_replicate : Property
+prop_replicate =
+  property $ do
+    [n,v] <- forAll $ hlist [smallNats, bytes]
+    E.toList (replicate n v) === replicate n v
+
+prop_cons : Property
+prop_cons =
+  property $ do
+    [v,vs] <- forAll $ hlist [bytes,byteLists]
+    E.toList (cons v $ emits vs) === (v::vs)
+
+prop_consMaybe : Property
+prop_consMaybe =
+  property $ do
+    [v,vs] <- forAll $ hlist [maybe bytes,byteLists]
+    E.toList (consMaybe v $ emits vs) === (toList v ++ vs)
+
 -- prop_uncons : Property
 -- prop_uncons =
 --   property $ do
@@ -334,17 +279,17 @@ props =
   MkGroup "FS.Pull"
     [ ("prop_emit", prop_emit)
     , ("prop_emits", prop_emits)
+    , ("prop_emitList", prop_emitList)
+    , ("prop_emitMaybe", prop_emitMaybe)
+    , ("prop_eval", prop_eval)
     , ("prop_unfold", prop_unfold)
     , ("prop_unfoldEval", prop_unfoldEval)
     , ("prop_unfoldEvalMaybe", prop_unfoldEvalMaybe)
---     , ("prop_fill", prop_fill)
---     , ("prop_fillChunks", prop_fillChunks)
---     , ("prop_iterate", prop_iterate)
---     , ("prop_iterateChunks", prop_iterateChunks)
---     , ("prop_replicate", prop_replicate)
---     , ("prop_replicateChunks", prop_replicateChunks)
---     , ("prop_fromChunks", prop_fromChunks)
---     , ("prop_cons", prop_cons)
+    , ("prop_fill", prop_fill)
+    , ("prop_iterate", prop_iterate)
+    , ("prop_replicate", prop_replicate)
+    , ("prop_cons", prop_cons)
+    , ("prop_consMaybe", prop_consMaybe)
 --     , ("prop_uncons", prop_uncons)
 --     , ("prop_unconsrem", prop_unconsrem)
 --     , ("prop_uncons1", prop_uncons1)
