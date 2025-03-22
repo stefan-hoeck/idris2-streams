@@ -5,8 +5,7 @@ import Data.Buffer.Indexed
 import Data.ByteString
 import Data.ByteVect
 import Data.String
-import FS.Bytes
-import FS.Stream
+import FS
 import Test.FS.Util
 
 -- --------------------------------------------------------------------------------
