@@ -39,85 +39,103 @@ nextMaybe ref = do
 -- Properties
 --------------------------------------------------------------------------------
 
+prop_pure : Property
+prop_pure =
+  property $ do
+    v <- forAll bytes
+    res (pure v) === succ v {o = Void} []
+
+prop_throw : Property
+prop_throw =
+  property $ do
+    v <- forAll bytes
+    resErrs [Bits8] (throw v) === failed (Here v) {r = Void, o = Void} []
+
+prop_exec : Property
+prop_exec =
+  property $ do
+    v <- forAll bytes
+    res (newref v >>= exec . readref) === succ v {o = Void} []
+
 prop_emit : Property
 prop_emit =
   property $ do
     v <- forAll bytes
-    E.toList (emit v) === [v]
+    res (emit v) === out [v]
 
 prop_emits : Property
 prop_emits =
   property $ do
     vs <- forAll byteLists
-    E.toList (emits vs) === vs
+    res (emits vs) === out vs
 
 prop_emitList : Property
 prop_emitList =
   property $ do
     vs <- forAll byteLists
     case vs of
-      [] => E.toList (emitList vs) === []
-      xs => E.toList (emitList vs) === [vs]
+      [] => res (emitList vs) === out []
+      xs => res (emitList vs) === out [vs]
 
 prop_emitMaybe : Property
 prop_emitMaybe =
   property $ do
     vs <- forAll (maybe bytes)
-    E.toList (emitMaybe vs) === toList vs
+    res (emitMaybe vs) === out (toList vs)
 
 prop_eval : Property
 prop_eval =
   property $ do
     v <- forAll bytes
-    E.toList (eval $ add1 v) === [v+1]
+    res (eval $ add1 v) === out [v+1]
 
 prop_unfold : Property
 prop_unfold =
   property $ do
     vs <- forAll byteLists
-    E.toList (unfold vs nextVal) === vs
+    res (unfold vs nextVal) === out vs
 
 prop_unfoldEval : Property
 prop_unfoldEval =
   property $ do
     vs <- forAll byteLists
-    E.toList (unfoldEval vs nextEval) === map (+1) vs
+    res (unfoldEval vs nextEval) === out (map (+1) vs)
 
 prop_unfoldEvalMaybe : Property
 prop_unfoldEvalMaybe =
   property $ do
     vs <- forAll byteLists
-    E.toList (exec (newref vs) >>= unfoldEvalMaybe . nextMaybe) === vs
+    res (exec (newref vs) >>= unfoldEvalMaybe . nextMaybe) === out vs
 
 prop_fill : Property
 prop_fill =
   property $ do
     [n,v] <- forAll $ hlist [smallNats, bytes]
-    E.toList (take n $ fill v) === replicate n v
+    res (take n $ fill v) === out (replicate n v)
 
 prop_iterate : Property
 prop_iterate =
   property $ do
     n <- forAll posNats
-    E.toList (take n $ iterate 0 S) === [0..pred n]
+    res (take n $ iterate 0 S) === out [0..pred n]
 
 prop_replicate : Property
 prop_replicate =
   property $ do
     [n,v] <- forAll $ hlist [smallNats, bytes]
-    E.toList (replicate n v) === replicate n v
+    res (replicate n v) === out (replicate n v)
 
 prop_cons : Property
 prop_cons =
   property $ do
     [v,vs] <- forAll $ hlist [bytes,byteLists]
-    E.toList (cons v $ emits vs) === (v::vs)
+    res (cons v $ emits vs) === out (v::vs)
 
 prop_consMaybe : Property
 prop_consMaybe =
   property $ do
     [v,vs] <- forAll $ hlist [maybe bytes,byteLists]
-    E.toList (consMaybe v $ emits vs) === (toList v ++ vs)
+    res (consMaybe v $ emits vs) === out (toList v ++ vs)
 
 -- prop_uncons : Property
 -- prop_uncons =
@@ -277,7 +295,10 @@ export
 props : Group
 props =
   MkGroup "FS.Pull"
-    [ ("prop_emit", prop_emit)
+    [ ("prop_pure", prop_pure)
+    , ("prop_throw", prop_throw)
+    , ("prop_exec", prop_exec)
+    , ("prop_emit", prop_emit)
     , ("prop_emits", prop_emits)
     , ("prop_emitList", prop_emitList)
     , ("prop_emitMaybe", prop_emitMaybe)

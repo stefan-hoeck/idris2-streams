@@ -93,7 +93,7 @@ fill _ v = P.fill (replicateChunk v)
 
 ||| Like `P.iterate` but generates chunks of values of up to the given size.
 export
-iterate : ChunkSize => (0 c : _) -> Chunk c o => o -> (o -> o) -> Stream f es c
+iterate : ChunkSize => (0 c : _) -> Chunk c o => o -> (o -> o) -> Pull f c es ()
 iterate _ v f = unfold v (\x => Right (x, f x))
 
 ||| Like `P.replicate` but generates chunks of values of up to the given size.
@@ -171,18 +171,18 @@ parameters {auto chnk : Chunk c o}
   ||| The `BreakInstruction` dictates, if the value, for which the
   ||| predicate held, should be emitted as part of the prefix or not.
   export
-  takeUntil : BreakInstruction -> (o -> Bool) -> Stream f es c -> Stream f es c
+  takeUntil : BreakInstruction -> (o -> Bool) -> Pull f c es r -> Stream f es c
   takeUntil tf pred = ignore . newScope . Chunk.breakFull tf pred
 
   ||| Emits values until the given predicate returns `False`,
   ||| returning the remainder of the `Pull`.
   export %inline
-  takeWhile : (o -> Bool) -> Stream f es c -> Stream f es c
+  takeWhile : (o -> Bool) -> Pull f c es r -> Stream f es c
   takeWhile pred = Chunk.takeUntil DropHit (not . pred)
 
   ||| Like `takeWhile` but also includes the first failure.
   export %inline
-  takeThrough : (o -> Bool) -> Stream f es c -> Stream f es c
+  takeThrough : (o -> Bool) -> Pull f c es r -> Stream f es c
   takeThrough pred = Chunk.takeUntil TakeHit (not . pred)
 
   ||| Discards values until the given predicate returns `True`.
@@ -254,13 +254,13 @@ parameters {auto fld : Foldable t}
   ||| Returns `True` if all emitted values of the given stream fulfill
   ||| the given predicate
   export %inline
-  all : (o -> Bool) -> Stream f es (t o) -> Stream f es Bool
+  all : (o -> Bool) -> Pull f (t o) es r -> Stream f es Bool
   all pred = P.all (all pred)
 
   ||| Returns `True` if any of the emitted values of the given stream fulfills
   ||| the given predicate
   export %inline
-  any : (o -> Bool) -> Stream f es (t o) -> Stream f es Bool
+  any : (o -> Bool) -> Pull f (t o) es r -> Stream f es Bool
   any pred = P.any (any pred)
 
   ||| Emits the sum over all elements emitted by a `Pull`.
