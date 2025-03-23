@@ -54,7 +54,7 @@ delayed dur v = sleep dur <+> emit v
 ||| Converts a bounded queue of values into an infinite stream
 ||| of values.
 export %inline
-dequeue : BQueue o -> AsyncStream e es o
+dequeue : BQueue o -> AsyncPull e o es ()
 dequeue = repeat . eval . dequeue
 
 ||| Converts a channel of chunks into an infinite stream of values.

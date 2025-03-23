@@ -91,14 +91,14 @@ unfoldEvalMaybe act =
 
 ||| Infinitely produces chunks of values of the given size
 export
-fill : o -> Stream f es o
+fill : o -> Pull f o es ()
 fill v = assert_total $ emit v >> fill v
 
 ||| An infinite stream of values of type `o` where
 ||| the next value is built from the previous one by
 ||| applying the given function.
 export
-iterate : o -> (o -> o) -> Stream f es o
+iterate : o -> (o -> o) -> Pull f o es ()
 iterate v f = unfold v (\x => More x $ f x)
 
 ||| Produces the given chunk of value `n` times.
@@ -109,7 +109,7 @@ replicate (S k) v = emit v >> replicate k v
 
 ||| Infinitely cycles through the given `Pull`
 export
-repeat : Stream f es o -> Stream f es o
+repeat : Stream f es o -> Pull f o es ()
 repeat v = assert_total $ v >> repeat v
 
 ||| Prepends the given output to a pull.
@@ -164,7 +164,7 @@ splitAt (S k) p =
 
 ||| Emits only the first `n` values of a `Stream`.
 export %inline
-take : Nat -> Stream f es o -> Stream f es o
+take : Nat -> Pull f o es r -> Stream f es o
 take n = ignore . newScope . splitAt n
 
 ||| Discards the first `n` values of a `Stream`, returning the
@@ -175,12 +175,12 @@ drop k = join . drain . splitAt k
 
 ||| Only keeps the first element of the input.
 export %inline
-head : Stream f es o -> Stream f es o
+head : Pull f o es r -> Stream f es o
 head = take 1
 
 ||| Drops the first element of the input.
 export %inline
-tail : Stream f es o -> Stream f es o
+tail : Pull f o es r -> Pull f o es r
 tail = drop 1
 
 ||| Like `uncons` but does not consume the chunk
@@ -236,26 +236,26 @@ breakFull bi pred =
 ||| The `BreakInstruction` dictates, if the value, for which the
 ||| predicate held, should be emitted as part of the prefix or not.
 export
-takeUntil : BreakInstruction -> (o -> Bool) -> Stream f es o -> Stream f es o
+takeUntil : BreakInstruction -> (o -> Bool) -> Pull f o es r -> Stream f es o
 takeUntil tf pred = ignore . newScope . breakFull tf pred
 
 ||| Emits values until the given predicate returns `False`,
 ||| returning the remainder of the `Pull`.
 export %inline
-takeWhile : (o -> Bool) -> Stream f es o -> Stream f es o
+takeWhile : (o -> Bool) -> Pull f o es r -> Stream f es o
 takeWhile pred = takeUntil DropHit (not . pred)
 
 ||| Like `takeWhile` but also includes the first failure.
 export %inline
-takeThrough : (o -> Bool) -> Stream f es o -> Stream f es o
+takeThrough : (o -> Bool) -> Pull f o es r -> Stream f es o
 takeThrough pred = takeUntil TakeHit (not . pred)
 
 ||| Emits values until the given pull emits a `Nothing`.
 export
-takeWhileJust : Stream f es (Maybe o) -> Stream f es o
+takeWhileJust : Pull f (Maybe o) es r -> Stream f es o
 takeWhileJust = newScope . go
   where
-    go : Stream f es (Maybe o) -> Stream f es o
+    go : Pull f (Maybe o) es r -> Stream f es o
     go p =
       assert_total $ uncons p >>= \case
         Left _      => pure ()
@@ -351,7 +351,7 @@ endWithNothing s = mapOutput Just s >>= \res => emit Nothing $> res
 
 ||| Returns the first output of this stream.
 export
-firstOr : Lazy o -> Stream f es o -> Pull f p es o
+firstOr : Lazy o -> Pull f o es r -> Pull f p es o
 firstOr dflt s =
   newScope $ uncons s >>= \case
     Left _      => pure dflt
@@ -378,7 +378,7 @@ fold1 g s =
 ||| Emits `True` if all emitted values of the given stream fulfill
 ||| the given predicate
 export
-all : (o -> Bool) -> Stream f es o -> Stream f es Bool
+all : (o -> Bool) -> Pull f o es r -> Stream f es Bool
 all pred p =
   assert_total $ uncons p >>= \case
     Left _ => emit True
@@ -389,7 +389,7 @@ all pred p =
 ||| Returns `True` if any of the emitted values of the given stream fulfills
 ||| the given predicate
 export
-any : (o -> Bool) -> Stream f es o -> Stream f es Bool
+any : (o -> Bool) -> Pull f o es r -> Stream f es Bool
 any pred p =
   assert_total $ uncons p >>= \case
     Left _ => emit False
