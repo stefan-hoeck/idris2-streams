@@ -85,3 +85,7 @@ resErrs _ p =
 export covering %inline
 res : (forall s . Pull (Elin s) o [] r) -> Res [] o r
 res = resErrs []
+
+export covering %inline
+outOnly : (forall s . Pull (Elin s) o [] r) -> List o
+outOnly p = output (res p)
