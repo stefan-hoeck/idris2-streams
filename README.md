@@ -9,6 +9,7 @@ so we start with some imports and some utilities:
 module README
 
 import Data.Bits
+import Data.FilePath
 import Derive.Prelude
 import FS.Elin as E
 import FS.Posix
@@ -380,9 +381,9 @@ to monitor allocation and cleanup events:
 ```idris
 public export
 data Event : Type -> Type where
-  All : Nat -> Event a
-  Rel : Nat -> Event a
-  O   : a -> Event a
+  All : Nat -> Event a -- allocation
+  Rel : Nat -> Event a -- release
+  O   : a -> Event a   -- data output
 
 %runElab derive "Event" [Show,Eq]
 
@@ -419,7 +420,7 @@ runHandled p =
 With the above, we are ready to go. We first set up a dummy resource
 type called `Alloc`, that can only be created and released
 in the presence of an allocation handler. The handler keeps track
-of allocation and release event, plus it allows us to send all
+of allocation and release events, plus it allows us to send all
 streaming output to it. Let's give this a try:
 
 ```idris
@@ -461,7 +462,7 @@ README> :exec runHandled resource2
 R {outcome = Succeeded (), output = [All 1, O 0, O 1, O 2, O 3, O 4, Rel 1]}
 ```
 
-From now on, I'm not going to print the REPL for every additional
+From now on, I'm not going to print the REPL output for every additional
 example. Feel free to run your own experiments.
 
 Concatenating streams should take resource management into account:
@@ -508,8 +509,10 @@ While having a versatile API for working with pure streams of values can be
 useful, the real use case for libraries such as this one is to stream data
 coming from and going to `IO` sources and sinks: Files, sockets, databases.
 
-Here's a second example, which reads a text file line by line and converts
-all numeric entries from degrees Fahrenheit to Celsius.
+Here's a new example, which reads a text file line by line and converts
+all numeric entries from degrees Fahrenheit to Celsius. We now start
+running our examples in the `Async` monad, which gives us powerful
+concurrency primitives and non-blocking I/O capabilities.
 
 ```idris
 0 Prog : Type -> Type
@@ -538,7 +541,7 @@ fahrenheit =
 
 The above will convert every line in file `resources/fahrenheit.txt`
 to Celsius, skipping empty lines and comments. This is already very
-convenience, but under the hood, it does so much more:
+convenient, but under the hood, it does so much more:
 
 * It performs error handling: When the file in question is not present
   or can't be read, it will fail with an exception of type `Errno` and
@@ -547,22 +550,13 @@ convenience, but under the hood, it does so much more:
   stream of values has been exhausted.
 
 Here's an example that can potentially open thousands of files (given
-as command-line arguments) and emit their content as a stream of
+as a stream of paths) and emit their content as a stream of
 `ByteStrings`, which will then be processed one line at a time.
 
 ```idris
--- Opens every file listed as a command-line arguments,
--- streaming its content and cutting it into a stream
--- of lines. Every line is annotated with its index in the
--- stream and the longest line is printed together with its
--- index.
---
--- Resources are managed automatically: Every file is closed
--- as soon as it has been exhausted, so this can be used to
--- stream thousands of files.
 idrisLines : Prog String -> Prog Void
-idrisLines args =
-     args
+idrisLines files =
+     files
   |> observe stdoutLn
   |> bind readBytes
   |> lines
@@ -570,12 +564,40 @@ idrisLines args =
   |> C.zipWithIndex
   |> C.fold max (Z,Z)
   |> printLnTo Stdout
+```
 
+We can invoke `idrisLines` with the list of command-line
+arguments, which can be provided as a stream of strings, or
+we can produce a stream of file paths by (recursively) listing
+all files in a directory and all its subfolders. Like so:
+
+```idris
+idrisLinesInDir : String -> Prog Void
+idrisLinesInDir s =
+  let (FP pth) := fromString s
+   in idrisLines $ deepEntries pth |> P.mapMaybe idrisFile
+
+  where
+    idrisFile : Entry p -> Maybe String
+    idrisFile e =
+      if extension e.path == Just "idr"
+         then Just (interpolate e.path)
+         else Nothing
+```
+
+This last example demonstrates the power of automatic resource management:
+We can open literally thousands of files and directories, flatten
+out the corresponding streams of bytes, and process them as a single entity
+in constant memory while sparse resources such as file and directory handles
+will be closed for us automatically along the way.
+
+```idris
 prog : List String -> Prog Void
 prog []     = throw EINVAL
 prog (_::t) = case t of
   ["fahrenheit"]   => fahrenheit
   "idris-lines"::t => idrisLines (emits t)
+  ["idris-dir",d]  => idrisLinesInDir d
   _                => stderrLn "Invalid commandline arguments"
 
 covering
