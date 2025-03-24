@@ -8,6 +8,7 @@ module FS.Chunk
 
 import FS.Pull as P
 import Data.List
+import Data.Maybe
 import Data.Nat
 
 %default total
@@ -68,7 +69,7 @@ data SplitRes : Type -> Type where
 ||| Examples include `List a` with element type `a` and `ByteString` with
 ||| element type `Bits8`.
 public export
-interface Chunk (0 c,o : Type) | c where
+interface Monoid c => Chunk (0 c,o : Type) | c where
   unfoldChunk    : ChunkSize => (s ->  Either r (o,s)) -> s -> UnfoldRes r s c
   replicateChunk : ChunkSize => o -> c
   isEmpty        : c -> Bool
@@ -77,8 +78,12 @@ interface Chunk (0 c,o : Type) | c where
   breakChunk     : BreakInstruction -> (o -> Bool) -> c -> BreakRes c
   filterChunk    : (o -> Bool) -> c -> Maybe c
 
+export
+nonEmpty : Chunk c o => c -> Maybe c
+nonEmpty v = if isEmpty v then Nothing else Just v
+
 --------------------------------------------------------------------------------
--- Utilities
+-- Creating streams of chunks
 --------------------------------------------------------------------------------
 
 ||| Like `unfold` but generates chunks of values of up to the given size.
@@ -204,6 +209,25 @@ parameters {auto chnk : Chunk c o}
   export %inline
   dropThrough : (o -> Bool) -> Pull f c es r -> Pull f c es r
   dropThrough pred = Chunk.dropUntil DropHit (not . pred)
+
+  ||| Splits a stream of chunks whenever an element fulfills the given
+  ||| predicate.
+  export
+  split : (o -> Bool) -> Pull f c es r -> Pull f (List c)  es r
+  split pred = scanFull neutral impl (map pure . nonEmpty)
+    where
+      loop : SnocList c -> Maybe c -> (Maybe $ List c, c)
+      loop sc Nothing  = (Just $ sc <>> [], neutral)
+      loop sc (Just x) =
+        assert_total $ case breakChunk DropHit pred x of
+          Broken x post => loop (sc :< fromMaybe neutral x) post
+          Keep x        => (Just $ sc <>> [], x)
+
+      impl : c -> c -> (Maybe $ List c, c)
+      impl pre cur =
+        case breakChunk DropHit pred cur of
+          Broken x post => loop [<pre <+> fromMaybe neutral x] post
+          Keep x        => (Nothing, pre <+> x)
 
 --------------------------------------------------------------------------------
 -- Maps and Filters

@@ -4,6 +4,7 @@ import Control.Monad.Elin
 import Data.Buffer.Indexed
 import Data.ByteString
 import Data.ByteVect
+import Data.List1
 import Data.String
 import FS
 import Test.FS.Util
@@ -19,7 +20,7 @@ splitBytes (x :: xs) bs =
    in y :: splitBytes xs z
 
 utf8Strings : Gen String
-utf8Strings = string (linear 0 100) printableUnicode
+utf8Strings = string (linear 0 100) unicode
 
 stringAndSplits : Gen (HList [List Nat, String])
 stringAndSplits = hlist [list (linear 0 10) smallNats, utf8Strings]
@@ -55,8 +56,17 @@ prop_lines1 : Property
 prop_lines1 =
   property $ do
     bss <- forAll unicodeChunks
-    let str := toString (fastConcat bss)
-    (join $ outOnly $ C.mapOutput toString $ lines $ emits bss) === lines str
+    let bs := fastConcat bss
+    when (bs.size > 0) $
+      (join $ outOnly $ lines $ emits bss) === split 10 bs
+
+prop_split : Property
+prop_split =
+  property $ do
+    bss <- forAll unicodeChunks
+    let bs := fastConcat bss
+    when (bs.size > 0) $
+      (join $ outOnly $ C.split (10 ==) $ emits bss) === split 10 bs
 
 --------------------------------------------------------------------------------
 -- Group
@@ -70,4 +80,5 @@ props =
     , ("prop_utf8decode1", prop_utf8decode1)
     , ("prop_utf8decode", prop_utf8decode)
     , ("prop_lines1", prop_lines1)
+    , ("prop_split", prop_split)
     ]
