@@ -13,6 +13,9 @@ import Test.FS.Util
 -- Utilities and Generators
 --------------------------------------------------------------------------------
 
+byteStrings : Gen ByteString
+byteStrings = pack <$> byteLists
+
 splitBytes : List Nat -> ByteString -> List ByteString
 splitBytes []        bs = [bs]
 splitBytes (x :: xs) bs =
@@ -68,6 +71,26 @@ prop_split =
     when (bs.size > 0) $
       (join $ outOnly $ C.split (10 ==) $ emits bss) === split 10 bs
 
+prop_breakAtSubstring : Property
+prop_breakAtSubstring =
+  property $ do
+    [ss,bs] <- forAll $ hlist [byteStrings,list (linear 0 10) byteStrings]
+    (fastConcat $ outOnly $ ignore $ Bytes.breakAtSubstring ss (emits bs)) ===
+      fst (breakAtSubstring ss $ fastConcat bs)
+
+bssTotal : ByteString -> Pull f ByteString es r -> Pull f ByteString es r
+bssTotal ss p =
+  breakAtSubstring ss p >>= \case
+    Left  v => pure v
+    Right q => emit ss >> q
+
+prop_breakAtSubstringTotal : Property
+prop_breakAtSubstringTotal =
+  property $ do
+    [ss,bs] <- forAll $ hlist [byteStrings,list (linear 0 10) byteStrings]
+    (fastConcat $ outOnly $ bssTotal ss (emits bs)) ===
+      fastConcat bs
+
 --------------------------------------------------------------------------------
 -- Group
 --------------------------------------------------------------------------------
@@ -81,4 +104,6 @@ props =
     , ("prop_utf8decode", prop_utf8decode)
     , ("prop_lines1", prop_lines1)
     , ("prop_split", prop_split)
+    , ("prop_breakAtSubstring", prop_breakAtSubstring)
+    , ("prop_breakAtSubstringTotal", prop_breakAtSubstringTotal)
     ]
