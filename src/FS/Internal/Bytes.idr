@@ -3,8 +3,10 @@ module FS.Internal.Bytes
 import Data.Bits
 import Data.ByteString
 import Data.ByteVect
+import Derive.Prelude
 
 %default total
+%language ElabReflection
 
 export
 nonEmpty : ByteString -> Maybe ByteString
@@ -78,3 +80,33 @@ namespace UTF8
   breakAtLastIncomplete pre cur =
     let BS sz bv := pre <+> cur
      in splitLeading sz bv
+
+--------------------------------------------------------------------------------
+-- Breaking at Substrings
+--------------------------------------------------------------------------------
+
+||| Result of splitting a byte string at a given substring
+public export
+data BSSRes : Type where
+  ||| Input was too short. Will be passed on as a whole.
+  TooShort : ByteString -> BSSRes
+
+  ||| Substring not found. `pst` is one shorter than the substring in question,
+  ||| because it might still end on a prefix of the substring.
+  NoSS     : (pre,pst : ByteString) -> BSSRes
+
+  ||| Substring was found between `pre` and `pst`.
+  SS       : (pre,pst : ByteString) -> BSSRes
+
+%runElab derive "BSSRes" [Show,Eq]
+
+export
+breakAtSS : (ss, cur : ByteString) -> BSSRes
+breakAtSS ss cur =
+  case size cur < size ss of
+    True  => TooShort cur
+    False => case breakAtSubstring ss cur of
+      (pre, BS 0 _) =>
+        let ln := S (size pre) `minus` size ss
+         in NoSS (take ln pre) (drop ln pre)
+      (pre, pst)    => SS pre (drop ss.size pst)

@@ -127,14 +127,14 @@ parameters {auto chnk : Chunk c o}
 
   ||| Emits the first `n` elements of a `Pull`, returning the remainder.
   export
-  splitAt : Nat -> Pull f c es r -> Pull f c es (Pull f c es r)
+  splitAt : Nat -> Pull f c es r -> Pull f c es (Either r $ Pull f c es r)
   splitAt k p =
     assert_total $ P.uncons p >>= \case
-      Left v      => pure (pure v)
+      Left v      => pure (Left v)
       Right (vs,q) => case splitChunkAt k vs of
-        Middle pre post => emit pre $> cons post q
+        Middle pre post => emit pre $> Right (cons post q)
         All n           => emit vs >> Chunk.splitAt n q
-        Naught          => pure (cons vs q)
+        Naught          => pure (Right $ cons vs q)
 
   ||| Emits the first `n` elements of a `Pull`, returning the remainder.
   export %inline
@@ -145,7 +145,7 @@ parameters {auto chnk : Chunk c o}
   ||| remainder.
   export %inline
   drop : Nat -> Pull f c es r -> Pull f c es r
-  drop k = join . drain . Chunk.splitAt k
+  drop k p = drain (Chunk.splitAt k p) >>= either pure id
 
   ||| Emits the first element of a `Pull`, returning the remainder.
   export %inline
