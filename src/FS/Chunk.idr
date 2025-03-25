@@ -168,7 +168,7 @@ parameters {auto chnk : Chunk c o}
        BreakInstruction
     -> (o -> Bool)
     -> Pull f c es r
-    -> Pull f c es (Pull f c es r)
+    -> Pull f c es (Either r $ Pull f c es r)
   breakFull bi pred = breakPull (breakChunk bi pred)
 
   ||| Emits values until the given predicate returns `True`.
@@ -196,7 +196,7 @@ parameters {auto chnk : Chunk c o}
   ||| predicate held, should be emitted as part of the remainder or not.
   export
   dropUntil : BreakInstruction -> (o -> Bool) -> Pull f c es r -> Pull f c es r
-  dropUntil tf pred = join . drain . Chunk.breakFull tf pred
+  dropUntil tf pred p = drain (Chunk.breakFull tf pred p) >>= either pure id
 
   ||| Drops values from a stream while the given predicate returns `True`,
   ||| returning the remainder of the stream.

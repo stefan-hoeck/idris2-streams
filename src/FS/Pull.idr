@@ -145,6 +145,19 @@ export %inline
 uncons : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
 uncons = Uncons
 
+||| Like `uncons` but does not consume the chunk
+export
+peek : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
+peek p =
+  uncons p >>= \case
+    Left v       => pure (Left v)
+    Right (vs,q) => pure $ Right (vs, cons vs q)
+
+||| Like `peeks` but only checks if the pull has been exhausted or not.
+export %inline
+peekRes : Pull f o es r -> Pull f q es (Either r (Pull f o es r))
+peekRes = map (map snd) . peek
+
 ||| Empties a stream silently dropping all output.
 export
 drain : Pull f o es r -> Pull f q es r
@@ -154,12 +167,16 @@ drain p =
     Right (_,p) => drain p
 
 ||| Emits the first `n` values of a `Pull`, returning the remainder.
+|||
+||| In case the remaining pull is exhausted, with will wrap the
+||| final result in a `Left`, otherwise, the (non-empty) remainder will be
+||| wrapped in a right.
 export
-splitAt : Nat -> Pull f o es r -> Pull f o es (Pull f o es r)
-splitAt 0     p = pure p
+splitAt : Nat -> Pull f o es r -> Pull f o es (Either r $ Pull f o es r)
+splitAt 0     p = peekRes p
 splitAt (S k) p =
   assert_total $ uncons p >>= \case
-    Left v      => pure (pure v)
+    Left v      => pure (Left v)
     Right (v,q) => emit v >> splitAt k q
 
 ||| Emits only the first `n` values of a `Stream`.
@@ -171,7 +188,7 @@ take n = ignore . newScope . splitAt n
 ||| remainder.
 export %inline
 drop : Nat -> Pull f o es r -> Pull f o es r
-drop k = join . drain . splitAt k
+drop k q = drain (splitAt k q) >>= either pure id
 
 ||| Only keeps the first element of the input.
 export %inline
@@ -182,14 +199,6 @@ head = take 1
 export %inline
 tail : Pull f o es r -> Pull f o es r
 tail = drop 1
-
-||| Like `uncons` but does not consume the chunk
-export
-peek : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
-peek p =
-  uncons p >>= \case
-    Left v       => pure (Left v)
-    Right (vs,q) => pure $ Right (vs, cons vs q)
 
 ||| Result of splitting a value into two parts. This is used to
 ||| split up streams of data along logical boundaries.
@@ -204,13 +213,17 @@ data BreakRes : (c : Type) -> Type where
 ||| a prefix of emitted chunks and a suffix that is returned as
 ||| the result.
 export
-breakPull : (o -> BreakRes o) -> Pull f o es r -> Pull f o es (Pull f o es r)
+breakPull :
+     (o -> BreakRes o)
+  -> Pull f o es r
+  -> Pull f o es (Either r $ Pull f o es r)
 breakPull g p =
   assert_total $ uncons p >>= \case
-    Left r      => pure (pure r)
+    Left r      => pure (Left r)
     Right (v,q) => case g v of
-      Broken pre post => emitMaybe pre $> consMaybe post q
-      Keep w          => emit w >> breakPull g q
+      Keep w                => emit w >> breakPull g q
+      Broken pre (Just pst) => emitMaybe pre $> Right (cons pst q)
+      Broken pre Nothing    => emitMaybe pre >> peekRes q
 
 ||| Breaks a pull as soon as the given predicate returns `True`.
 |||
@@ -222,7 +235,7 @@ breakFull :
      BreakInstruction
   -> (o -> Bool)
   -> Pull f o es r
-  -> Pull f o es (Pull f o es r)
+  -> Pull f o es (Either r $ Pull f o es r)
 breakFull bi pred =
   breakPull $ \v => case pred v of
     False => Keep v
@@ -268,7 +281,7 @@ takeWhileJust = newScope . go
 ||| predicate held, should be emitted as part of the remainder or not.
 export
 dropUntil : BreakInstruction -> (o -> Bool) -> Pull f o es r -> Pull f o es r
-dropUntil tf pred = join . drain . breakFull tf pred
+dropUntil tf pred p = drain (breakFull tf pred p) >>= either pure id
 
 ||| Drops values from a stream while the given predicate returns `True`,
 ||| returning the remainder of the stream.
