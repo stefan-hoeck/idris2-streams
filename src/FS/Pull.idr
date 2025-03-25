@@ -145,6 +145,19 @@ export %inline
 uncons : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
 uncons = Uncons
 
+||| Like `uncons` but does not consume the chunk
+export
+peek : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
+peek p =
+  uncons p >>= \case
+    Left v       => pure (Left v)
+    Right (vs,q) => pure $ Right (vs, cons vs q)
+
+||| Like `peeks` but only checks if the pull has been exhausted or not.
+export %inline
+peekRes : Pull f o es r -> Pull f q es (Either r (Pull f o es r))
+peekRes = map (map snd) . peek
+
 ||| Empties a stream silently dropping all output.
 export
 drain : Pull f o es r -> Pull f q es r
@@ -154,6 +167,10 @@ drain p =
     Right (_,p) => drain p
 
 ||| Emits the first `n` values of a `Pull`, returning the remainder.
+|||
+||| In case the remaining pull is exhausted, with will wrap the
+||| final result in a `Left`, otherwise, the (non-empty) remainder will be
+||| wrapped in a right.
 export
 splitAt : Nat -> Pull f o es r -> Pull f o es (Pull f o es r)
 splitAt 0     p = pure p
@@ -167,11 +184,25 @@ export %inline
 take : Nat -> Pull f o es r -> Stream f es o
 take n = ignore . newScope . splitAt n
 
+||| Like `take` but limits the number of emitted values.
+|||
+||| This fails with the given error in case the limit is exceeded.
+|||
+||| Note: This tries to read past the end of a pull by invoking `peekRes`.
+|||       This is not suitable for limitting the input from a stream that
+|||       blocks once it is exhausted.
+export %inline
+limit : Has e es => Lazy e -> Nat -> Pull f o es r -> Pull f o es r
+limit err n p = do
+  q      <- splitAt n p
+  Left v <- peekRes q | Right _ => throw err
+  pure v
+
 ||| Discards the first `n` values of a `Stream`, returning the
 ||| remainder.
 export %inline
 drop : Nat -> Pull f o es r -> Pull f o es r
-drop k = join . drain . splitAt k
+drop k q = join $ drain (splitAt k q)
 
 ||| Only keeps the first element of the input.
 export %inline
@@ -182,14 +213,6 @@ head = take 1
 export %inline
 tail : Pull f o es r -> Pull f o es r
 tail = drop 1
-
-||| Like `uncons` but does not consume the chunk
-export
-peek : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
-peek p =
-  uncons p >>= \case
-    Left v       => pure (Left v)
-    Right (vs,q) => pure $ Right (vs, cons vs q)
 
 ||| Result of splitting a value into two parts. This is used to
 ||| split up streams of data along logical boundaries.
@@ -204,13 +227,17 @@ data BreakRes : (c : Type) -> Type where
 ||| a prefix of emitted chunks and a suffix that is returned as
 ||| the result.
 export
-breakPull : (o -> BreakRes o) -> Pull f o es r -> Pull f o es (Pull f o es r)
+breakPull :
+     (o -> BreakRes o)
+  -> Pull f o es r
+  -> Pull f o es (Either r $ Pull f o es r)
 breakPull g p =
   assert_total $ uncons p >>= \case
-    Left r      => pure (pure r)
+    Left r      => pure (Left r)
     Right (v,q) => case g v of
-      Broken pre post => emitMaybe pre $> consMaybe post q
-      Keep w          => emit w >> breakPull g q
+      Keep w                => emit w >> breakPull g q
+      Broken pre (Just pst) => emitMaybe pre $> Right (cons pst q)
+      Broken pre Nothing    => emitMaybe pre >> peekRes q
 
 ||| Breaks a pull as soon as the given predicate returns `True`.
 |||
@@ -222,7 +249,7 @@ breakFull :
      BreakInstruction
   -> (o -> Bool)
   -> Pull f o es r
-  -> Pull f o es (Pull f o es r)
+  -> Pull f o es (Either r $ Pull f o es r)
 breakFull bi pred =
   breakPull $ \v => case pred v of
     False => Keep v
@@ -268,7 +295,7 @@ takeWhileJust = newScope . go
 ||| predicate held, should be emitted as part of the remainder or not.
 export
 dropUntil : BreakInstruction -> (o -> Bool) -> Pull f o es r -> Pull f o es r
-dropUntil tf pred = join . drain . breakFull tf pred
+dropUntil tf pred p = drain (breakFull tf pred p) >>= either pure id
 
 ||| Drops values from a stream while the given predicate returns `True`,
 ||| returning the remainder of the stream.
@@ -349,13 +376,37 @@ endWithNothing s = mapOutput Just s >>= \res => emit Nothing $> res
 -- Folds
 --------------------------------------------------------------------------------
 
-||| Returns the first output of this stream.
+||| Returns the first output of this stream and pairs it with the
+||| result.
+|||
+||| The remainder of the pull is drained and run to completion.
 export
-firstOr : Lazy o -> Pull f o es r -> Pull f p es o
-firstOr dflt s =
-  newScope $ uncons s >>= \case
-    Left _      => pure dflt
-    Right (v,_) => pure v
+pairLastOr : Lazy o -> Pull f o es r -> Pull f p es (o,r)
+pairLastOr dflt s =
+  assert_total $ uncons s >>= \case
+    Left res    => pure (dflt,res)
+    Right (v,q) => pairLastOr v q
+
+||| Like `pairLastOr` but operates on a stream and therefore only returns
+||| the last output.
+export %inline
+lastOr : Lazy o -> Stream f es o -> Pull f p es o
+lastOr dflt s = fst <$> pairLastOr dflt s
+
+||| Like `firstOr` but fails with the given error in case no
+||| value is emitted.
+export
+pairLastOrErr : Has e es => Lazy e -> Pull f o es r -> Pull f p es (o,r)
+pairLastOrErr err s =
+  uncons s >>= \case
+    Left res    => throw err
+    Right (v,q) => pairLastOr v q
+
+||| Like `pairLastOrErr` but operates on a stream and therefore only returns
+||| the last output.
+export %inline
+lastOrErr : Has e es => Lazy e -> Stream f es o -> Pull f p es o
+lastOrErr err s = fst <$> pairLastOrErr err s
 
 ||| Folds the emit of a pull using an initial value and binary operator.
 |||

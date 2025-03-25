@@ -22,6 +22,12 @@ public export
 Bytes = List ByteString
 
 export
+concatSnoc : SnocBytes -> ByteString
+concatSnoc [<]  = empty
+concatSnoc [<x] = x
+concatSnoc sx   = fastConcat (sx <>> [])
+
+export
 nl : ByteString
 nl = singleton 0x0a
 
