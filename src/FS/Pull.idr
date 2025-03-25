@@ -447,7 +447,7 @@ scan s1 f p =
 |||
 ||| Aborts as soon as the given accumulator function returns `Nothing`
 export
-scanMaybe : s -> (s -> Maybe (o -> (p,s))) -> Stream f es o -> Pull f p es s
+scanMaybe : s -> (s -> Maybe (o -> (p,s))) -> Pull f o es r -> Pull f p es s
 scanMaybe s1 f p =
   assert_total $ case f s1 of
     Nothing => pure s1
@@ -459,15 +459,14 @@ scanMaybe s1 f p =
 export
 scanFull :
      s
-  -> (s -> o -> (p,s))
+  -> (s -> o -> (Maybe p,s))
   -> (s -> Maybe p)
-  -> Stream f es o
-  -> Stream f es p
-scanFull s1 f last p = do
-  v <- scanMaybe s1 (Just . f) p
-  case last v of
-    Just rem => emit rem
-    Nothing  => pure ()
+  -> Pull f o es r
+  -> Pull f p es r
+scanFull s1 g last p = do
+  assert_total $ uncons p >>= \case
+    Left v      => emitMaybe (last s1) $> v
+    Right (v,q) => let (w,s2) := g s1 v in emitMaybe w >> scanFull s2 g last q
 
 ||| Zips the input with a running total, up to but
 ||| not including the current element.

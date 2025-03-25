@@ -117,7 +117,7 @@ parameters {0    es  : List Type}
   ||| such as standard input.
   export %inline
   bytes : FileDesc a => a -> Bits32 -> AsyncStream e es ByteString
-  bytes fd buf = unfoldEvalMaybe $ nonEmpty <$> readnb fd _ buf
+  bytes fd buf = unfoldEvalMaybe $ Bytes.nonEmpty <$> readnb fd _ buf
 
   ||| Tries to open the given file and starts reading chunks of bytes
   ||| from the created file descriptor.

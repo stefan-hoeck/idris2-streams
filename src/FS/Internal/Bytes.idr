@@ -3,8 +3,10 @@ module FS.Internal.Bytes
 import Data.Bits
 import Data.ByteString
 import Data.ByteVect
+import Derive.Prelude
 
 %default total
+%language ElabReflection
 
 export
 nonEmpty : ByteString -> Maybe ByteString
@@ -23,17 +25,17 @@ export
 nl : ByteString
 nl = singleton 0x0a
 
-ls : SnocBytes -> (n : Nat) -> ByteVect n -> (Bytes, ByteString)
+ls : SnocBytes -> (n : Nat) -> ByteVect n -> (Maybe Bytes, ByteString)
 ls sb n bs = case breakNL bs of
-  MkBreakRes l1 0      b1 _  prf => (sb <>> [], BS l1 b1)
+  MkBreakRes l1 0      b1 _  prf => (Just $ sb <>> [], BS l1 b1)
   MkBreakRes l1 (S l2) b1 b2 prf =>
     ls (sb :< BS l1 b1) (assert_smaller n l2) (tail b2)
 
 export
-splitNL : ByteString -> ByteString -> (Bytes, ByteString)
+splitNL : ByteString -> ByteString -> (Maybe Bytes, ByteString)
 splitNL x (BS n bs) =
   case breakNL bs of
-    MkBreakRes l1 0      b1 _  prf => ([], x <+> BS l1 b1)
+    MkBreakRes l1 0      b1 _  prf => (Nothing, x <+> BS l1 b1)
     MkBreakRes l1 (S l2) b1 b2 prf => ls [<x <+> BS l1 b1] l2 (tail b2)
 
 namespace UTF8
@@ -59,22 +61,52 @@ namespace UTF8
     -> (k : Nat)
     -> ByteVect n
     -> {auto 0 p : LTE k n}
-    -> (ByteString,ByteString)
-  splitLeading 0     x = (empty, BS _ x)
+    -> (Maybe ByteString,ByteString)
+  splitLeading 0     x = (Nothing, BS _ x)
   splitLeading (S k) x =
     case continuationBytes (atNat x k) of
       Nothing  => splitLeading k x
       Just y   =>
         if S k + y == n
-           then (BS _ x, empty)
-           else (BS _ $ take k x, BS _ $ drop k x)
+           then (nonEmpty $ BS _ x, empty)
+           else (nonEmpty $ BS _ $ take k x, BS _ $ drop k x)
 
   ||| Breaks a list of byte vectors at the last incomplete UTF-8 codepoint
   ||| The first list is a concatenation of all the complete UTF-8 strings,
   ||| while the second list contains the last incomplete codepoint (in case
   ||| of a valid UTF-8 string, the second list holds at most 3 bytes).
   export
-  breakAtLastIncomplete : ByteString -> ByteString -> (ByteString, ByteString)
+  breakAtLastIncomplete : ByteString -> ByteString -> (Maybe ByteString, ByteString)
   breakAtLastIncomplete pre cur =
     let BS sz bv := pre <+> cur
      in splitLeading sz bv
+
+--------------------------------------------------------------------------------
+-- Breaking at Substrings
+--------------------------------------------------------------------------------
+
+||| Result of splitting a byte string at a given substring
+public export
+data BSSRes : Type where
+  ||| Input was too short. Will be passed on as a whole.
+  TooShort : ByteString -> BSSRes
+
+  ||| Substring not found. `pst` is one shorter than the substring in question,
+  ||| because it might still end on a prefix of the substring.
+  NoSS     : (pre,pst : ByteString) -> BSSRes
+
+  ||| Substring was found between `pre` and `pst`.
+  SS       : (pre,pst : ByteString) -> BSSRes
+
+%runElab derive "BSSRes" [Show,Eq]
+
+export
+breakAtSS : (ss, cur : ByteString) -> BSSRes
+breakAtSS ss cur =
+  case size cur < size ss of
+    True  => TooShort cur
+    False => case breakAtSubstring ss cur of
+      (pre, BS 0 _) =>
+        let ln := S (size pre) `minus` size ss
+         in NoSS (take ln pre) (drop ln pre)
+      (pre, pst)    => SS pre (drop ss.size pst)
