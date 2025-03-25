@@ -172,11 +172,11 @@ drain p =
 ||| final result in a `Left`, otherwise, the (non-empty) remainder will be
 ||| wrapped in a right.
 export
-splitAt : Nat -> Pull f o es r -> Pull f o es (Either r $ Pull f o es r)
-splitAt 0     p = peekRes p
+splitAt : Nat -> Pull f o es r -> Pull f o es (Pull f o es r)
+splitAt 0     p = pure p
 splitAt (S k) p =
   assert_total $ uncons p >>= \case
-    Left v      => pure (Left v)
+    Left v      => pure (pure v)
     Right (v,q) => emit v >> splitAt k q
 
 ||| Emits only the first `n` values of a `Stream`.
@@ -184,11 +184,25 @@ export %inline
 take : Nat -> Pull f o es r -> Stream f es o
 take n = ignore . newScope . splitAt n
 
+||| Like `take` but limits the number of emitted values.
+|||
+||| This fails with the given error in case the limit is exceeded.
+|||
+||| Note: This tries to read past the end of a pull by invoking `peekRes`.
+|||       This is not suitable for limitting the input from a stream that
+|||       blocks once it is exhausted.
+export %inline
+limit : Has e es => Lazy e -> Nat -> Pull f o es r -> Pull f o es r
+limit err n p = do
+  q      <- splitAt n p
+  Left v <- peekRes q | Right _ => throw err
+  pure v
+
 ||| Discards the first `n` values of a `Stream`, returning the
 ||| remainder.
 export %inline
 drop : Nat -> Pull f o es r -> Pull f o es r
-drop k q = drain (splitAt k q) >>= either pure id
+drop k q = join $ drain (splitAt k q)
 
 ||| Only keeps the first element of the input.
 export %inline
@@ -362,13 +376,37 @@ endWithNothing s = mapOutput Just s >>= \res => emit Nothing $> res
 -- Folds
 --------------------------------------------------------------------------------
 
-||| Returns the first output of this stream.
+||| Returns the first output of this stream and pairs it with the
+||| result.
+|||
+||| The remainder of the pull is drained and run to completion.
 export
-firstOr : Lazy o -> Pull f o es r -> Pull f p es o
-firstOr dflt s =
-  newScope $ uncons s >>= \case
-    Left _      => pure dflt
-    Right (v,_) => pure v
+pairLastOr : Lazy o -> Pull f o es r -> Pull f p es (o,r)
+pairLastOr dflt s =
+  assert_total $ uncons s >>= \case
+    Left res    => pure (dflt,res)
+    Right (v,q) => pairLastOr v q
+
+||| Like `pairLastOr` but operates on a stream and therefore only returns
+||| the last output.
+export %inline
+lastOr : Lazy o -> Stream f es o -> Pull f p es o
+lastOr dflt s = fst <$> pairLastOr dflt s
+
+||| Like `firstOr` but fails with the given error in case no
+||| value is emitted.
+export
+pairLastOrErr : Has e es => Lazy e -> Pull f o es r -> Pull f p es (o,r)
+pairLastOrErr err s =
+  uncons s >>= \case
+    Left res    => throw err
+    Right (v,q) => pairLastOr v q
+
+||| Like `pairLastOrErr` but operates on a stream and therefore only returns
+||| the last output.
+export %inline
+lastOrErr : Has e es => Lazy e -> Stream f es o -> Pull f p es o
+lastOrErr err s = fst <$> pairLastOrErr err s
 
 ||| Folds the emit of a pull using an initial value and binary operator.
 |||

@@ -61,7 +61,6 @@ defaultChunkSize = 128
 public export
 data SplitRes : Type -> Type where
   Middle : (pre, post : c) -> SplitRes c
-  Naught : SplitRes c
   All    : Nat -> SplitRes c
 
 ||| A `Chunk c o` is a container type `c` holding elements of type `o`.
@@ -127,25 +126,35 @@ parameters {auto chnk : Chunk c o}
 
   ||| Emits the first `n` elements of a `Pull`, returning the remainder.
   export
-  splitAt : Nat -> Pull f c es r -> Pull f c es (Either r $ Pull f c es r)
+  splitAt : Nat -> Pull f c es r -> Pull f c es (Pull f c es r)
+  splitAt 0 p = pure p
   splitAt k p =
     assert_total $ P.uncons p >>= \case
-      Left v      => pure (Left v)
+      Left v      => pure (pure v)
       Right (vs,q) => case splitChunkAt k vs of
-        Middle pre post => emit pre $> Right (cons post q)
+        Middle pre post => emit pre $> cons post q
         All n           => emit vs >> Chunk.splitAt n q
-        Naught          => pure (Right $ cons vs q)
 
   ||| Emits the first `n` elements of a `Pull`, returning the remainder.
   export %inline
   take : Nat -> Pull f c es r -> Pull f c es ()
   take n = ignore . newScope . Chunk.splitAt n
 
+  ||| Like `take` but limits the number of emitted values.
+  |||
+  ||| This fails with the given error in case the limit is exceeded.
+  export %inline
+  limit : Has e es => Lazy e -> Nat -> Pull f c es r -> Pull f c es r
+  limit err n p = do
+    q      <- Chunk.splitAt n p
+    Left v <- peekRes q | Right _ => throw err
+    pure v
+
   ||| Drops the first `n` elements of a `Pull`, returning the
   ||| remainder.
   export %inline
   drop : Nat -> Pull f c es r -> Pull f c es r
-  drop k p = drain (Chunk.splitAt k p) >>= either pure id
+  drop k p = join $ drain (Chunk.splitAt k p)
 
   ||| Emits the first element of a `Pull`, returning the remainder.
   export %inline
@@ -424,8 +433,7 @@ Chunk (List a) a where
   unconsChunk []     = Nothing
   unconsChunk (h::t) = Just (h, nel t)
 
-  splitChunkAt 0 _  = Naught
-  splitChunkAt n xs = splitAtList [<] n xs
+  splitChunkAt = splitAtList [<]
 
   breakChunk = breakList [<]
 
