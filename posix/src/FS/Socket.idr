@@ -24,5 +24,5 @@ parameters {0    es  : List Type}
   acceptOn d tpe addr =
     resource ((\x => Socket.R x) <$> socketnb d tpe) $ \(R sock) => do
       bind sock addr
-      listen sock 128
+      listen sock 2048
       repeat $ exec (acceptnb sock) >>= emits . toList
