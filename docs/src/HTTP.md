@@ -149,15 +149,14 @@ theory, a header's value could be spread across several lines.
 For now, we are not going to support this.
 
 ```idris
-next : Maybe Headers -> ByteString -> Maybe Headers
-next mh bs =
-  mh >>= \hs =>
-    case break (58 ==) bs of -- 58 is a colon (:)
-      (xs,BS (S k) bv) =>
-        let name := toLower (toString xs)
-            val  := toString (trim $ tail bv)
-         in Just $ insert name val hs
-      _ => Nothing
+hpair : MErr f => Has HTTPErr es => ByteString -> f es (String,String)
+hpair bs =
+  case break (58 ==) bs of -- 58 is a colon (:)
+    (xs,BS (S k) bv) =>
+     let name := toLower (toString xs)
+         val  := toString (trim $ tail bv)
+      in pure (name, val)
+    _                => throw InvalidRequest
 ```
 
 Given a stream of lists of byte vectors (each byte vector corresponding
@@ -166,16 +165,14 @@ the set of headers:
 
 ```idris
 accumHeaders : HTTPPull (List ByteString) a -> HTTPPull o (Headers,a)
-accumHeaders p =
-  pairLastOr Nothing (fold next (Just empty) p) >>= \case
-    (Nothing,r) => throw InvalidRequest
-    (Just hs,r) => pure (hs,r)
+accumHeaders = C.foldPair insert' empty . evalMap (traverse hpair)
 ```
 
-In `accumHeaders`, we use `fold` to accumulate the emitted values and
-`pairLastOr` to return the accumulate result together with the
+In `accumHeaders`, we use `evalMap` to map the emitted values with
+the possibility of failure and
+`foldPair` to return the accumulate result together with the
 other result of the pull. In case no set of headers was accumulated,
-we abort with an error. Please note, that calling `fold` to accumulate
+we abort with an error. Please note, that calling `foldPair` to accumulate
 all values in a stream is somewhat risky especially if the result grows
 with the number of accumulated values. We are safe here, however, since
 we are going to limit the header to `MaxHeaderSize` bytes.

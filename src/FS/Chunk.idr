@@ -276,6 +276,17 @@ parameters {auto fld : Foldable t}
   fold : (p -> o -> p) -> p -> Pull f (t o) es r -> Pull f p es r
   fold g = P.fold (foldl g)
 
+  ||| Like `fold` but instead of emitting the result as a single
+  ||| value of output, it is paired with the `Pull`s result.
+  export %inline
+  foldPair : (p -> o -> p) -> p -> Pull f (t o) es r -> Pull f q es (p,r)
+  foldPair g = P.foldPair (foldl g)
+
+  ||| Convenience version of `foldPair` for working on streams.
+  export %inline
+  foldGet : (p -> o -> p) -> p -> Stream f es (t o) -> Pull f q es p
+  foldGet g = P.foldGet (foldl g)
+
   ||| Like `foldC` but will not emit a value in case of an empty pull.
   export
   fold1 : Chunk (t o) o => (o -> o -> o) -> Pull f (t o) es r -> Pull f o es r
