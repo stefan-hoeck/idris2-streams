@@ -268,3 +268,25 @@ parJoin maxOpen out = do
   finally
     (putDeferred done (Right ()) >> wait fbr)
     (interruptOn done (receive output))
+
+export
+foreachPar :
+     (maxOpen    : Nat)
+  -> {auto 0 prf : IsSucc maxOpen}
+  -> (sink       : o -> Async e [] ())
+  -> (outer      : AsyncPull e o es r)
+  -> AsyncPull e q es r
+foreachPar maxOpen sink outer = do
+  -- concurrent slots available. child streams will wait on this
+  -- before being started.
+  available <- semaphore maxOpen
+
+  finally
+    (acquireN available maxOpen)
+    (foreach (run available) outer)
+
+  where
+    run : Semaphore -> o -> Async e es ()
+    run available v = do
+      acquire available
+      ignore $ start (guarantee (sink v) (release available))

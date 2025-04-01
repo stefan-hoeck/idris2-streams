@@ -293,9 +293,9 @@ echo cli p =
     Left _   => emit badRequest |> writeTo cli
     Right () => pure ()
 
-serve : Socket AF_INET -> AsyncStream Poll [Errno] Void
+serve : Socket AF_INET -> Async Poll [] ()
 serve cli =
-  handleErrors (\(Here x) => stderrLn "\{x}") $
+  assert_total $ mpull $ handleErrors (\(Here x) => stderrLn "\{x}") $
     finally (close' cli) $
          bytes cli 0xfff
       |> request
@@ -309,8 +309,8 @@ sure the client connection is properly closed once we are done.
 
 The final missing step is accepting incoming connections and
 serving them, possibly in parallel and without blocking.
-We can use the `parJoin` combinator for running and joining
-streams in parallel.
+We can use the `foreachPar` combinator for processing values
+produced by a stream in parallel.
 
 ```idris
 addr : Bits16 -> IP4Addr
@@ -318,7 +318,7 @@ addr = IP4 [127,0,0,1]
 
 echoSrv : Bits16 -> (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] Void
 echoSrv port n =
-  parJoin n (mapOutput serve $ acceptOn AF_INET SOCK_STREAM (addr port))
+  foreachPar n serve (acceptOn AF_INET SOCK_STREAM (addr port))
 ```
 
 Below is a bit of glue code to read a couple of settings from
