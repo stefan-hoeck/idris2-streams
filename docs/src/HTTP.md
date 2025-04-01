@@ -300,7 +300,7 @@ serve : Socket AF_INET -> AsyncStream Poll [Errno] Void
 serve cli =
   handleErrors (\(Here x) => stderrLn "\{x}") $
     finally (close' cli) $
-         bytes cli 0xffff
+         bytes cli 0xfff
       |> request
       |> echo cli
 ```
