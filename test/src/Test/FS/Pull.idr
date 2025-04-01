@@ -185,6 +185,48 @@ prop_count =
     vs <- forAll byteLists
     res (count (emits vs)) === out [length vs]
 
+prop_foldPair : Property
+prop_foldPair =
+  property $ do
+    [v,vs] <- forAll $ hlist [bytes,byteLists]
+    emptyRes (foldPair (+) 0 (emits vs $> v)) === succ (sum vs,v) []
+
+prop_foldGet : Property
+prop_foldGet =
+  property $ do
+    vs <- forAll $ byteLists
+    emptyRes (foldGet (+) 0 (emits vs)) === succ (sum vs) []
+
+prop_evalFold : Property
+prop_evalFold =
+  property $ do
+    [v,vs] <- forAll $ hlist [bytes,byteLists]
+    res (evalFold plus 0 (emits vs $> v)) === succ v [sum vs]
+
+  where
+    plus : Bits8 -> Bits8 -> Elin s es Bits8
+    plus x y = pure $ x + y
+
+prop_evalFoldPair : Property
+prop_evalFoldPair =
+  property $ do
+    [v,vs] <- forAll $ hlist [bytes,byteLists]
+    emptyRes (evalFoldPair plus 0 (emits vs $> v)) === succ (sum vs,v) []
+
+  where
+    plus : Bits8 -> Bits8 -> Elin s es Bits8
+    plus x y = pure $ x + y
+
+prop_evalFoldGet : Property
+prop_evalFoldGet =
+  property $ do
+    vs <- forAll byteLists
+    emptyRes (evalFoldGet plus 0 (emits vs)) === succ (sum vs) []
+
+  where
+    plus : Bits8 -> Bits8 -> Elin s es Bits8
+    plus x y = pure $ x + y
+
 --------------------------------------------------------------------------------
 -- Group
 --------------------------------------------------------------------------------
@@ -216,4 +258,9 @@ props =
     , ("prop_takeWhile", prop_takeWhile)
     , ("prop_sum", prop_sum)
     , ("prop_count", prop_count)
-     ]
+    , ("prop_foldPair", prop_foldPair)
+    , ("prop_foldGet", prop_foldGet)
+    , ("prop_evalFold", prop_evalFold)
+    , ("prop_evalFoldPair", prop_evalFoldPair)
+    , ("prop_evalFoldGet", prop_evalFoldGet)
+    ]

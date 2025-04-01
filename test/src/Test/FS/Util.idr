@@ -87,5 +87,9 @@ res : (forall s . Pull (Elin s) o [] r) -> Res [] o r
 res = resErrs []
 
 export covering %inline
+emptyRes : (forall s . Pull (Elin s) Void [] r) -> Res [] Void r
+emptyRes = res
+
+export covering %inline
 outOnly : (forall s . Pull (Elin s) o [] r) -> List o
 outOnly p = output (res p)
