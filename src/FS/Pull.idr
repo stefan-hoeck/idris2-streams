@@ -418,6 +418,20 @@ fold g v s =
     Left res      => emit v $> res
     Right (vs,s2) => fold g (g v vs) s2
 
+||| Like `fold` but instead of emitting the result as a single
+||| value of output, it is paired with the `Pull`s result.
+export
+foldPair : (p -> o -> p) -> p -> Pull f o es r -> Pull f q es (p,r)
+foldPair g v s =
+  assert_total $ uncons s >>= \case
+    Left res      => pure (v, res)
+    Right (vs,s2) => foldPair g (g v vs) s2
+
+||| Convenience version of `foldPair` for working on streams.
+export %inline
+foldGet : (p -> o -> p) -> p -> Stream f es o -> Pull f q es p
+foldGet acc ini = map fst . foldPair acc ini
+
 ||| Like `foldC` but will not emit a value in case of an empty pull.
 export
 fold1 : (o -> o -> o) -> Pull f o es r -> Pull f o es r
@@ -481,6 +495,30 @@ mappend = fold1 (<+>)
 export %inline
 foldMap : Monoid m => (o -> m) -> Pull f o es r -> Pull f m es r
 foldMap f = fold (\v,el => v <+> f el) neutral
+
+||| Folds the emit of a pull using an initial value and binary operator.
+|||
+||| The accumulated result is emitted as a single value.
+export
+evalFold : (p -> o -> f es p) -> p -> Pull f o es r -> Pull f p es r
+evalFold g v s =
+  assert_total $ uncons s >>= \case
+    Left res      => emit v $> res
+    Right (vs,s2) => exec (g v vs) >>= \v2 => evalFold g v2 s2
+
+||| Like `fold` but instead of emitting the result as a single
+||| value of output, it is paired with the `Pull`s result.
+export
+evalFoldPair : (p -> o -> f es p) -> p -> Pull f o es r -> Pull f q es (p,r)
+evalFoldPair g v s =
+  assert_total $ uncons s >>= \case
+    Left res      => pure (v, res)
+    Right (vs,s2) => exec (g v vs) >>= \v2 => evalFoldPair g v2 s2
+
+||| Convenience version of `evalFoldPair` for working on streams.
+export %inline
+evalFoldGet : (p -> o -> f es p) -> p -> Stream f es o -> Pull f q es p
+evalFoldGet acc ini = map fst . evalFoldPair acc ini
 
 --------------------------------------------------------------------------------
 -- Scans
