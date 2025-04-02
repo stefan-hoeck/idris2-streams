@@ -228,16 +228,16 @@ data BreakRes : (c : Type) -> Type where
 ||| the result.
 export
 breakPull :
-     (o -> BreakRes o)
+     (orElse : r -> Pull f o es r)
+  -> (o -> BreakRes o)
   -> Pull f o es r
-  -> Pull f o es (Either r $ Pull f o es r)
-breakPull g p =
+  -> Pull f o es (Pull f o es r)
+breakPull orElse g p =
   assert_total $ uncons p >>= \case
-    Left r      => pure (Left r)
+    Left r      => pure (orElse r)
     Right (v,q) => case g v of
-      Keep w                => emit w >> breakPull g q
-      Broken pre (Just pst) => emitMaybe pre $> Right (cons pst q)
-      Broken pre Nothing    => emitMaybe pre >> peekRes q
+      Keep w         => emit w >> breakPull orElse g q
+      Broken pre pst => emitMaybe pre $> consMaybe pst q
 
 ||| Breaks a pull as soon as the given predicate returns `True`.
 |||
@@ -246,17 +246,30 @@ breakPull g p =
 ||| suffix, or if it should be discarded.
 export
 breakFull :
-     BreakInstruction
+     (orElse : r -> Pull f o es r)
+  -> BreakInstruction
   -> (o -> Bool)
   -> Pull f o es r
-  -> Pull f o es (Either r $ Pull f o es r)
-breakFull bi pred =
-  breakPull $ \v => case pred v of
+  -> Pull f o es (Pull f o es r)
+breakFull orElse bi pred =
+  breakPull orElse $ \v => case pred v of
     False => Keep v
     True  => case bi of
       TakeHit => Broken (Just v) Nothing
       PostHit => Broken Nothing  (Just v)
       DropHit => Broken Nothing Nothing
+
+||| Like `breakFull` but fails with the given execption if no
+||| breaking point was found.
+export %inline
+forceBreakFull :
+     {auto has : Has e es}
+  -> (err : Lazy e)
+  -> BreakInstruction
+  -> (o -> Bool)
+  -> Pull f o es r
+  -> Pull f o es (Pull f o es r)
+forceBreakFull err = breakFull (const $ throw err)
 
 ||| Emits values until the given predicate returns `True`.
 |||
@@ -264,7 +277,7 @@ breakFull bi pred =
 ||| predicate held, should be emitted as part of the prefix or not.
 export
 takeUntil : BreakInstruction -> (o -> Bool) -> Pull f o es r -> Stream f es o
-takeUntil tf pred = ignore . newScope . breakFull tf pred
+takeUntil tf pred = ignore . newScope . breakFull pure tf pred
 
 ||| Emits values until the given predicate returns `False`,
 ||| returning the remainder of the `Pull`.
@@ -295,7 +308,7 @@ takeWhileJust = newScope . go
 ||| predicate held, should be emitted as part of the remainder or not.
 export
 dropUntil : BreakInstruction -> (o -> Bool) -> Pull f o es r -> Pull f o es r
-dropUntil tf pred p = drain (breakFull tf pred p) >>= either pure id
+dropUntil tf pred p = drain (breakFull pure tf pred p) >>= id
 
 ||| Drops values from a stream while the given predicate returns `True`,
 ||| returning the remainder of the stream.

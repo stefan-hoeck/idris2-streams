@@ -75,21 +75,16 @@ prop_breakAtSubstring : Property
 prop_breakAtSubstring =
   property $ do
     [ss,bs] <- forAll $ hlist [byteStrings,list (linear 0 10) byteStrings]
-    (fastConcat $ outOnly $ ignore $ Bytes.breakAtSubstring ss (emits bs)) ===
+    (fastConcat $ outOnly $ ignore $ Bytes.breakAtSubstring pure ss (emits bs)) ===
       fst (breakAtSubstring ss $ fastConcat bs)
-
-bssTotal : ByteString -> Pull f ByteString es r -> Pull f ByteString es r
-bssTotal ss p =
-  breakAtSubstring ss p >>= \case
-    Left  v => pure v
-    Right q => emit ss >> q
 
 prop_breakAtSubstringTotal : Property
 prop_breakAtSubstringTotal =
   property $ do
     [ss,bs] <- forAll $ hlist [byteStrings,list (linear 0 10) byteStrings]
-    (fastConcat $ outOnly $ bssTotal ss (emits bs)) ===
-      fastConcat bs
+    let (xs,ys) := ByteString.breakAtSubstring ss (fastConcat bs)
+    (fastConcat $ outOnly $ Bytes.breakAtSubstring pure ss (emits bs) >>= id) ===
+      (xs <+> drop ss.size ys)
 
 --------------------------------------------------------------------------------
 -- Group

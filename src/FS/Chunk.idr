@@ -169,16 +169,32 @@ parameters {auto chnk : Chunk c o}
   ||| Breaks a pull as soon as the given predicate returns `True` for
   ||| an emitted element.
   |||
+  ||| `orElse` determines what to do if the pull is exhausted before any
+  ||| splitting of output occurred.
+  |||
   ||| The `BreakInstruction` dictates, if the value, for which the
   ||| predicate held, should be emitted as part of the prefix or the
   ||| suffix, or if it should be discarded.
   export
   breakFull :
-       BreakInstruction
+       (orElse : r -> Pull f c es r)
+    -> BreakInstruction
     -> (o -> Bool)
     -> Pull f c es r
-    -> Pull f c es (Either r $ Pull f c es r)
-  breakFull bi pred = breakPull (breakChunk bi pred)
+    -> Pull f c es (Pull f c es r)
+  breakFull orElse bi pred = breakPull orElse (breakChunk bi pred)
+
+  ||| Like `breakFull` but fails with an error if the `Pull` is
+  ||| exhausted before the prediate returns `True`.
+  export %inline
+  forceBreakFull :
+       {auto has : Has e es}
+    -> Lazy e
+    -> BreakInstruction
+    -> (o -> Bool)
+    -> Pull f c es r
+    -> Pull f c es (Pull f c es r)
+  forceBreakFull err = breakFull (const $ throw err)
 
   ||| Emits values until the given predicate returns `True`.
   |||
@@ -186,7 +202,7 @@ parameters {auto chnk : Chunk c o}
   ||| predicate held, should be emitted as part of the prefix or not.
   export
   takeUntil : BreakInstruction -> (o -> Bool) -> Pull f c es r -> Stream f es c
-  takeUntil tf pred = ignore . newScope . Chunk.breakFull tf pred
+  takeUntil tf pred = ignore . newScope . Chunk.breakFull pure tf pred
 
   ||| Emits values until the given predicate returns `False`,
   ||| returning the remainder of the `Pull`.
@@ -205,7 +221,7 @@ parameters {auto chnk : Chunk c o}
   ||| predicate held, should be emitted as part of the remainder or not.
   export
   dropUntil : BreakInstruction -> (o -> Bool) -> Pull f c es r -> Pull f c es r
-  dropUntil tf pred p = drain (Chunk.breakFull tf pred p) >>= either pure id
+  dropUntil tf pred p = drain (Chunk.breakFull pure tf pred p) >>= id
 
   ||| Drops values from a stream while the given predicate returns `True`,
   ||| returning the remainder of the stream.

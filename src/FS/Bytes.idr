@@ -44,34 +44,34 @@ lines = scanFull empty splitNL (map pure . nonEmpty)
 ||| and the remainder of the pull returned (if any).
 export
 breakAtSubstring :
-     ByteString
+     (orElse : r -> Pull f ByteString es r)
+  -> ByteString
   -> Pull f ByteString es r
-  -> Pull f ByteString es (Either r $ Pull f ByteString es r)
-breakAtSubstring ss = go empty
+  -> Pull f ByteString es (Pull f ByteString es r)
+breakAtSubstring orElse ss = go empty
   where
     go :
          ByteString
       -> Pull f ByteString es r
-      -> Pull f ByteString es (Either r $ Pull f ByteString es r)
+      -> Pull f ByteString es (Pull f ByteString es r)
     go pre p =
       assert_total $ uncons p >>= \case
-        Left v        => emitBS pre $> Left v
+        Left v        => emitBS pre $> orElse v
         Right (cur,q) => case breakAtSS ss (pre <+> cur) of
           TooShort x => go x q
           NoSS x y   => emitBS x >> go y q
-          SS   x y   => emitBS x $> Right (emitBS y >> q)
+          SS   x y   => emitBS x $> (emitBS y >> q)
 
 ||| Like `breakAtSubstring` but fails with the given error if
 ||| the substring is not encountered.
-export
+export %inline
 forceBreakAtSubstring :
      {auto has : Has e es}
   -> Lazy e
   -> ByteString
   -> Pull f ByteString es r
   -> Pull f ByteString es (Pull f ByteString es r)
-forceBreakAtSubstring err ss p =
-  breakAtSubstring ss p >>= either (const $ throw err) pure
+forceBreakAtSubstring err = breakAtSubstring (const $ throw err)
 
 namespace UTF8
   ||| Converts the byte vectors emitted by a stream to byte vectors
