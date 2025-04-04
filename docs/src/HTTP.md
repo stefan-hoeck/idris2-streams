@@ -209,7 +209,7 @@ assemble p = Prelude.do
   Right (h,rem) <- C.uncons p | _ => throw InvalidRequest
   (met,tgt)     <- injectEither (startLine h)
   (hs,body)     <- accumHeaders rem
-  exec (stdoutLn "Got a request with a \{show $ contentLength hs} bytes body")
+  -- exec (putStrLn "Got a request with a \{show $ contentLength hs} bytes body")
   pure (req met tgt hs body)
 ```
 

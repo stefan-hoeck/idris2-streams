@@ -25,4 +25,4 @@ parameters {0    es  : List Type}
     resource ((\x => Socket.R x) <$> socketnb d tpe) $ \(R sock) => do
       bind sock addr
       listen sock 2048
-      repeat $ exec (acceptnb sock) >>= emits . toList
+      repeat $ eval (acceptnb sock)
