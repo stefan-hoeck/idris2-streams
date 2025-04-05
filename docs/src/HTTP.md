@@ -304,7 +304,7 @@ serve cli = guarantee tillFalse (putStrLn "closing connection" >> close' cli)
     tillFalse =
       pull (bytes cli 0xfff |> request |> echo cli) >>= \case
         Succeeded False => pure ()
-        Succeeded True  => tillFalse
+        Succeeded True  => cede >> tillFalse
         Error (Here x)  => stderrLn "\{x}"
         Canceled        => pure ()
 ```
