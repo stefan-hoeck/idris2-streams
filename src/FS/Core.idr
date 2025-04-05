@@ -271,8 +271,11 @@ parameters {0 f      : List Type -> Type -> Type}
       -- we wrap the output and continuation in a `Res . Right`. In case
       -- it is exhausted (produces an `Out res` we wrap the `res` in
       -- a `Res . Left`.
-      Uncons p   =>
-        step p sc >>= \case
+      Uncons p   => case p of
+        Output v => pure (Res sc $ Succeeded (Right (v, Val ())))
+        Val v    => pure (Res sc $ Succeeded (Left v))
+        Err v    => pure (Res sc $ Error v)
+        _ => step p sc >>= \case
           Res sc res     => case res of
             Succeeded r => pure (Res sc $ Succeeded $ Left r)
             Error x     => pure (Res sc $ Error x)
@@ -283,8 +286,11 @@ parameters {0 f      : List Type -> Type -> Type}
       -- to function `g`. In case of some output being emitted, we return
       -- the output and wrap the continuation again in a `Bind`. In case
       -- of interruption, we pass on the interruption.
-      Bind x g   =>
-        step x sc >>= \case
+      Bind x g => case x of
+        Output v => pure (Out sc v (g ()))
+        Val    v => step (g v) sc
+        Err    x => pure (Res sc $ Error x)
+        _     => step x sc >>= \case
           Res sc o  => case o of
             Succeeded r => step (g r) sc
             Error x     => pure (Res sc $ Error x)
@@ -297,8 +303,11 @@ parameters {0 f      : List Type -> Type -> Type}
       -- the output is returned and the continuation pull is again wrapped
       -- in an `Att`. This makes sure that the pull produces output until
       -- the first error or it is exhausted or interrputed.
-      Att x =>
-        step x sc >>= \case
+      Att x => case x of
+        Output v => pure (Out sc v (Val (Right ())))
+        Val    v => pure (Res sc $ Succeeded $ Right v)
+        Err    x => pure (Res sc $ Succeeded $ Left x)
+        _ => step x sc >>= \case
           Res sc res     => case res of
             Succeeded r => pure (Res sc $ Succeeded $ Right r)
             Error x     => pure (Res sc $ Succeeded $ Left x)

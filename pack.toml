@@ -14,6 +14,11 @@ type   = "local"
 path   = "docs"
 ipkg   = "docs.ipkg"
 
+[custom.all.streams-profile]
+type   = "local"
+path   = "profile"
+ipkg   = "streams-profile.ipkg"
+
 [custom.all.elin]
 type   = "git"
 url    = "https://github.com/stefan-hoeck/idris2-elin"
