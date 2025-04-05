@@ -132,28 +132,28 @@ parameters {0    es  : List Type}
   content = readBytes . interpolate . path
 
   export
-  writeTo : ToBuf r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es Void
+  writeTo : ToBuf o => FileDesc a => a -> AsyncPull e o es r -> AsyncPull e Void es r
   writeTo fd = foreach (fwritenb fd)
 
   export
-  printLnTo : Show r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es Void
+  printLnTo : Show o => FileDesc a => a -> AsyncPull e o es r -> AsyncPull e Void es r
   printLnTo fd = foreach (fwritenb fd . (++"\n") . show)
 
   export
-  printLnsTo : Show r => FileDesc a => a -> AsyncStream e es (List r) -> AsyncStream e es Void
+  printLnsTo : Show o => FileDesc a => a -> AsyncPull e (List o) es r -> AsyncPull e Void es r
   printLnsTo fd =
-    foreach $ \xs => let impl := ShowToBytes {a = r} in writeLines fd xs
+    foreach $ \xs => let impl := ShowToBytes {a = o} in writeLines fd xs
 
   export
-  printTo : Show r => FileDesc a => a -> AsyncStream e es r -> AsyncStream e es Void
+  printTo : Show o => FileDesc a => a -> AsyncPull e o es r -> AsyncPull e Void es r
   printTo fd = foreach (fwritenb fd . show)
 
   export
-  writeFile : ToBuf r => String -> AsyncStream e es r -> AsyncStream e es Void
+  writeFile : ToBuf o => String -> AsyncPull e o es r -> AsyncPull e Void es r
   writeFile path str =
     resource (openFile path create 0o666) $ \fd => writeTo fd str
 
   export
-  appendFile : ToBuf r => String -> AsyncStream e es r -> AsyncStream e es Void
+  appendFile : ToBuf o => String -> AsyncPull e o es r -> AsyncPull e Void es r
   appendFile path str =
     resource (openFile path append 0o666) $ \fd => writeTo fd str

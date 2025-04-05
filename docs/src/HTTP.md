@@ -90,11 +90,24 @@ public export
 record Request where
   constructor R
   method  : Method
+  proto   : String
   uri     : String
   headers : Headers
   length  : Nat
   type    : Maybe String
   body    : HTTPStream ByteString
+
+export
+Interpolation Request where
+  interpolate (R m pro u hs l _ _) =
+    """
+    \{show m} \{u} \{pro}
+    \{headers}
+    length: \{show l}
+    """
+    where
+      headers : String
+      headers = unlines $ map (\(n,v) => "\{n}: \{v}") (kvList hs)
 ```
 
 As you can see, the request body is wrapped up as a byte stream for
@@ -131,13 +144,13 @@ Here's a function for processing the start line of a HTTP request
 (byte 32 represents a single space):
 
 ```idris
-startLine : ByteString -> Either HTTPErr (Method,String)
+startLine : ByteString -> Either HTTPErr (Method,String,String)
 startLine bs =
   case toString <$> split 32 bs of
-    [met,tgt,_] => case met of
-      "GET"  => Right (GET, tgt)
-      "POST" => Right (POST,tgt)
-      "HEAD" => Right (HEAD,tgt)
+    [met,tgt,pro] => case met of
+      "GET"  => Right (GET, tgt,pro)
+      "POST" => Right (POST,tgt,pro)
+      "HEAD" => Right (HEAD,tgt,pro)
       _      => Left InvalidRequest
     _ => Left InvalidRequest
 
@@ -165,24 +178,25 @@ contentLength = maybe 0 cast . lookup "content-length"
 contentType : Headers -> Maybe String
 contentType = lookup "content-type"
 
-parseHeader : ByteString -> HTTPStream ByteString -> Either HTTPErr Request
+parseHeader : ByteString -> HTTPStream ByteString -> Either HTTPErr (Maybe Request)
+parseHeader (BS 0 _ ) rem = Right Nothing
 parseHeader (BS _ bv) rem =
   case ByteVect.lines bv of
     h::ls =>
-      let Right (met,tgt) := startLine h      | Left x => Left x
-          Right hs        := headers ls empty | Left x => Left x
-          cl              := contentLength hs
-          ct              := contentType hs
+      let Right (m,t,p) := startLine h      | Left x => Left x
+          Right hs      := headers ls empty | Left x => Left x
+          cl            := contentLength hs
+          ct            := contentType hs
        in if cl <= MaxContentSize
-             then Left ContentSizeExceeded
-             else Right (R met tgt hs cl ct $ C.take cl rem)
+             then Right $ Just (R m p t hs cl ct $ pure ()) -- C.take cl rem)
+             else Left ContentSizeExceeded
     []    => Left InvalidRequest
 
 accumHeader :
      SnocList ByteString
   -> Nat
   -> HTTPPull ByteString (HTTPStream ByteString)
-  -> HTTPPull o Request
+  -> HTTPPull o (Maybe Request)
 accumHeader sb sz p =
   assert_total $ P.uncons p >>= \case
     Left x       => case sb of
@@ -218,10 +232,11 @@ The only thing missing is the splitting of the raw byte stream
 into header and body. Here's the code:
 
 ```idris
-request : HTTPStream ByteString -> HTTPPull o Request
+request : HTTPStream ByteString -> HTTPPull o (Maybe Request)
 request req =
      forceBreakAtSubstring InvalidRequest "\r\n\r\n" req
   |> accumHeader [<] 0
+  -- |> (>>= maybe (pure Nothing) (\x => putStrLn "\{x}" $> Just x))
 ```
 
 The header of a HTTP request is separated from the body by a
@@ -241,7 +256,7 @@ we don't provide.
 encodeResponse : (status : Nat) -> List (String,String) -> ByteString
 encodeResponse status hs =
   fastConcat $ intersperse "\r\n" $ map fromString $
-    "HTTP/1.0 \{show status}" ::
+    "HTTP/1.1 \{show status}" ::
     map (\(x,y) => "\{x}: \{y}") hs ++
     ["\r\n"]
 
@@ -251,13 +266,17 @@ badRequest = encodeResponse 400 []
 ok : List (String,String) -> ByteString
 ok = encodeResponse 200
 
-response : Request -> HTTPStream ByteString
-response r = cons resp r.body
+keepAlive : (String,String)
+keepAlive = ("Connection", "keep-alive")
+
+response : Maybe Request -> HTTPPull ByteString Bool
+response Nothing  = pure False
+response (Just r) = cons resp r.body $> True
   where
     resp : ByteString
     resp = case r.type of
-      Nothing => ok []
-      Just t  => ok [("Content-Type",t),("Content-Length",show r.length)]
+      Nothing => ok [keepAlive, ("Content-Length", "0")]
+      Just t  => ok [keepAlive,("Content-Type",t),("Content-Length",show r.length)]
 ```
 
 As you can see, in order to echo the request body back to the client,
@@ -269,20 +288,25 @@ We are now ready to handle a single request from start to beginning:
 ```idris
 echo :
      Socket AF_INET
-  -> HTTPPull ByteString Request
-  -> AsyncStream Poll [Errno] Void
+  -> HTTPPull ByteString (Maybe Request)
+  -> AsyncPull Poll Void [Errno] Bool
 echo cli p =
   extractErr HTTPErr (writeTo cli (p >>= response)) >>= \case
-    Left _   => emit badRequest |> writeTo cli
-    Right () => pure ()
+    Left _  => emit badRequest |> writeTo cli |> ($> False)
+    Right b => pure b
 
+covering
 serve : Socket AF_INET -> Async Poll [] ()
-serve cli =
-  assert_total $ mpull $ handleErrors (\(Here x) => stderrLn "\{x}") $
-    finally (close' cli) $
-         bytes cli 0xfff
-      |> request
-      |> echo cli
+serve cli = guarantee tillFalse (putStrLn "closing connection" >> close' cli)
+  where
+    covering
+    tillFalse : Async Poll [] ()
+    tillFalse =
+      pull (bytes cli 0xfff |> request |> echo cli) >>= \case
+        Succeeded False => pure ()
+        Succeeded True  => tillFalse
+        Error (Here x)  => stderrLn "\{x}"
+        Canceled        => pure ()
 ```
 
 As you can see, we added some error handling facilities and made
@@ -299,9 +323,10 @@ produced by a stream in parallel.
 addr : Bits16 -> IP4Addr
 addr = IP4 [127,0,0,1]
 
+covering
 echoSrv : Bits16 -> (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] Void
 echoSrv port n =
-  foreachPar n (traverse_ serve) (acceptN 50 AF_INET SOCK_STREAM (addr port))
+  foreachPar n serve (acceptOn AF_INET SOCK_STREAM (addr port))
 ```
 
 Below is a bit of glue code to read a couple of settings from
@@ -309,6 +334,7 @@ command-line arguments: The port we are listening on as well as
 the maximum number of connections we serve in parallel.
 
 ```idris
+covering
 prog : List String -> Prog [Errno] Void
 prog ["server", port, n] =
   case cast {to = Nat} n of
