@@ -149,69 +149,54 @@ theory, a header's value could be spread across several lines.
 For now, we are not going to support this.
 
 ```idris
-hpair : MErr f => Has HTTPErr es => ByteString -> f es (String,String)
-hpair bs =
-  case break (58 ==) bs of -- 58 is a colon (:)
+headers : List ByteString -> Headers -> Either HTTPErr Headers
+headers []     hs = Right hs
+headers (h::t) hs =
+  case break (58 ==) h of -- 58 is a colon (:)
     (xs,BS (S k) bv) =>
      let name := toLower (toString xs)
          val  := toString (trim $ tail bv)
-      in pure (name, val)
-    _                => throw InvalidRequest
-```
+      in headers t (insert name val hs)
+    _                => Left InvalidRequest
 
-Given a stream of lists of byte vectors (each byte vector corresponding
-to a single line of the request header), we can use `next` to accumulate
-the set of headers:
-
-```idris
-accumHeaders : HTTPPull (List ByteString) a -> HTTPPull o (Headers,a)
-accumHeaders = C.foldPair insert' empty . evalMap (traverse hpair)
-```
-
-In `accumHeaders`, we use `evalMap` to map the emitted values with
-the possibility of failure and
-`foldPair` to return the accumulate result together with the
-other result of the pull. In case no set of headers was accumulated,
-we abort with an error. Please note, that calling `foldPair` to accumulate
-all values in a stream is somewhat risky especially if the result grows
-with the number of accumulated values. We are safe here, however, since
-we are going to limit the header to `MaxHeaderSize` bytes.
-
-Next, we need the ability to extract values for a couple of specific
-headers (header names in HTTP are case insensitive):
-
-```idris
 contentLength : Headers -> Nat
 contentLength = maybe 0 cast . lookup "content-length"
 
 contentType : Headers -> Maybe String
 contentType = lookup "content-type"
+
+parseHeader : ByteString -> HTTPStream ByteString -> Either HTTPErr Request
+parseHeader (BS _ bv) rem =
+  case ByteVect.lines bv of
+    h::ls =>
+      let Right (met,tgt) := startLine h      | Left x => Left x
+          Right hs        := headers ls empty | Left x => Left x
+          cl              := contentLength hs
+          ct              := contentType hs
+       in if cl <= MaxContentSize
+             then Left ContentSizeExceeded
+             else Right (R met tgt hs cl ct $ C.take cl rem)
+    []    => Left InvalidRequest
+
+accumHeader :
+     SnocList ByteString
+  -> Nat
+  -> HTTPPull ByteString (HTTPStream ByteString)
+  -> HTTPPull o Request
+accumHeader sb sz p =
+  assert_total $ P.uncons p >>= \case
+    Left x       => case sb of
+      [<bs] => injectEither (parseHeader bs x)
+      _     => injectEither (parseHeader (fastConcat $ sb <>> []) x)
+    Right (bs,q) =>
+     let sz2 := sz + bs.size
+      in if sz2 > MaxHeaderSize
+            then throw HeaderSizeExceeded
+            else accumHeader (sb:<bs) sz2 q
 ```
 
 We are now ready to assemble the HTTP request from a pull of
 the correct shape:
-
-```idris
-checkLength : Nat -> HTTPStream ByteString -> HTTPStream ByteString
-checkLength cl p =
-  if cl > MaxContentSize then throw ContentSizeExceeded else C.take cl p
-
-req : Method -> String -> Headers -> HTTPStream ByteString -> Request
-req m tgt hs body =
-  let cl := contentLength hs
-      ct := contentType hs
-   in R m tgt hs cl ct (checkLength cl body)
-
-assemble :
-     HTTPPull (List ByteString) (HTTPStream ByteString)
-  -> HTTPPull o Request
-assemble p = Prelude.do
-  Right (h,rem) <- C.uncons p | _ => throw InvalidRequest
-  (met,tgt)     <- injectEither (startLine h)
-  (hs,body)     <- accumHeaders rem
-  -- exec (putStrLn "Got a request with a \{show $ contentLength hs} bytes body")
-  pure (req met tgt hs body)
-```
 
 Function `checkLength` limits the number of remaining bytes we read
 from the client to the content length given in the request header.
@@ -236,9 +221,7 @@ into header and body. Here's the code:
 request : HTTPStream ByteString -> HTTPPull o Request
 request req =
      forceBreakAtSubstring InvalidRequest "\r\n\r\n" req
-  |> C.limit HeaderSizeExceeded MaxHeaderSize
-  |> lines
-  |> assemble
+  |> accumHeader [<] 0
 ```
 
 The header of a HTTP request is separated from the body by a
