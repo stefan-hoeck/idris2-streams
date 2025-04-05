@@ -301,7 +301,7 @@ addr = IP4 [127,0,0,1]
 
 echoSrv : Bits16 -> (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] Void
 echoSrv port n =
-  foreachPar n serve (acceptOn AF_INET SOCK_STREAM (addr port))
+  foreachPar n (traverse_ serve) (acceptN 50 AF_INET SOCK_STREAM (addr port))
 ```
 
 Below is a bit of glue code to read a couple of settings from
