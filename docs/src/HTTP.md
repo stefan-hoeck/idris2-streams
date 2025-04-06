@@ -9,29 +9,30 @@ different parts of the stream individually. Let's get started.
 ```idris
 module HTTP
 
-import Data.SortedMap
+import public Data.SortedMap
 import Derive.Prelude
-import FS.Posix
-import FS.Socket
+import public FS.Posix
+import public FS.Socket
 
-import IO.Async.Loop.Posix
-import IO.Async.Loop.Epoll
+import public IO.Async.Loop.Posix
+import public IO.Async.Loop.Epoll
 
-import System
+import public System
 
 %default total
 %language ElabReflection
 ```
 
 To keep things simple, we start with HTTP 1.0 support only.
-We are going to define a bunch of type aliases and utilities,
+We are going to define a bunch of type aliases and utilities
 before we start working on streaming HTTP requests:
 
 ```idris
+public export
 0 Prog : List Type -> Type -> Type
 Prog = AsyncStream Poll
 
-covering
+export covering
 runProg : Prog [Errno] Void -> IO ()
 runProg prog = epollApp $ mpull (handle [stderrLn . interpolate] prog)
 
@@ -60,17 +61,17 @@ HTTPStream o = AsyncPull Poll o [Errno,HTTPErr] ()
 
 ## A Data Type for HTTP Requests
 
-First, we are going to define a `Request` data type that and some
+First, we are going to define a `Request` data type and some
 additional utilities. A typical HTTP request consists of a
 start line listing the HTTP method, request target, and protocol to
 use, followed by an arbitrary number of headers (colon-separated
 name/value pairs, each on a separate line), followed by a final
 empty line. After this follows the - optional - body of the message.
 
-In HTTP 1.0, we typically need to fully process the start line an message
-headers, because they typically contain detailed instructions about
+In HTTP 1.0, we typically need to fully process the start line and message
+headers, because they contain detailed instructions about
 what the client requests. The message body, however, could consist of
-larger amount of data that might not even fit into memory, so we
+larger amounts of data that might not even fit into memory, so we
 might not want to process that as a whole unless we know it is of
 reasonable size.
 
@@ -87,10 +88,16 @@ data Method = GET | POST | HEAD
 %runElab derive "Method" [Show,Eq,Ord]
 
 public export
+data Version = V10 | V11 | V20
+
+%runElab derive "Version" [Show,Eq,Ord]
+
+public export
 record Request where
   constructor R
   method  : Method
   uri     : String
+  version : Version
   headers : Headers
   length  : Nat
   type    : Maybe String
@@ -109,15 +116,17 @@ follows:
 * Split of the request header by streaming and accumulating
   chunks of bytes until an empty line (represented as '"\r\n\r\n"')
   is encountered.
-* Split the header along line breaks and process the start lines followed
+* Split the header along line breaks and process the start line followed
   by the request headers.
-* Analyze the request and process the body accordingly.
+* Analyze the request headers and process the body accordingly.
 * Answer with a suitable response.
 
 In addition to the above, we might consider putting a limit on the
 size of the request header to make sure it conveniently fits into memory.
-We should also limit the request body, depending on the kind of
-data it contains.
+We should also limit size of the request body, depending on the kind of
+data it contains. In a real application, such limits would be part
+of a larger set of configuration settings but here we hard-code them
+to keep things simple.
 
 ```idris
 MaxHeaderSize : Nat
@@ -127,31 +136,43 @@ MaxContentSize : Nat
 MaxContentSize = 0xffff_ffff
 ```
 
-Here's a function for processing the start line of a HTTP request
-(byte 32 represents a single space):
+Here's a function for processing the start line of a HTTP request:
 
 ```idris
-startLine : ByteString -> Either HTTPErr (Method,String)
+%inline
+SPACE, COLON : Bits8
+SPACE = 32
+COLON = 58
+
+method : String -> Either HTTPErr Method
+method "GET"  = Right GET
+method "POST" = Right POST
+method "HEAD" = Right HEAD
+method _      = Left InvalidRequest
+
+version : String -> Either HTTPErr Version
+version "HTTP/1.0" = Right V10
+version "HTTP/1.1" = Right V11
+version "HTTP/2.0" = Right V20
+version _          = Left InvalidRequest
+
+startLine : ByteString -> Either HTTPErr (Method,String,Version)
 startLine bs =
-  case toString <$> split 32 bs of
-    [met,tgt,_] => case met of
-      "GET"  => Right (GET, tgt)
-      "POST" => Right (POST,tgt)
-      "HEAD" => Right (HEAD,tgt)
-      _      => Left InvalidRequest
-    _ => Left InvalidRequest
+  case toString <$> split SPACE (trim bs) of
+    [m,t,v] => [| (\x,y,z => (x,y,z)) (method m) (pure t) (version v) |]
+    _       => Left InvalidRequest
 
 ```
 
 Next, we need a function to process and accumulate the request
 headers, one line at a time. We simplify this a bit, since in
-theory, a header's value could be spread across several lines.
+theory a header's value could be spread across several lines.
 For now, we are not going to support this.
 
 ```idris
 hpair : MErr f => Has HTTPErr es => ByteString -> f es (String,String)
 hpair bs =
-  case break (58 ==) bs of -- 58 is a colon (:)
+  case break (COLON ==) bs of
     (xs,BS (S k) bv) =>
      let name := toLower (toString xs)
          val  := toString (trim $ tail bv)
@@ -196,21 +217,17 @@ checkLength : Nat -> HTTPStream ByteString -> HTTPStream ByteString
 checkLength cl p =
   if cl > MaxContentSize then throw ContentSizeExceeded else C.take cl p
 
-req : Method -> String -> Headers -> HTTPStream ByteString -> Request
-req m tgt hs body =
-  let cl := contentLength hs
-      ct := contentType hs
-   in R m tgt hs cl ct (checkLength cl body)
-
+export
 assemble :
      HTTPPull (List ByteString) (HTTPStream ByteString)
-  -> HTTPPull o Request
+  -> HTTPPull o (Maybe Request)
 assemble p = Prelude.do
-  Right (h,rem) <- C.uncons p | _ => throw InvalidRequest
-  (met,tgt)     <- injectEither (startLine h)
+  Right (h,rem) <- C.uncons p | _ => pure Nothing
+  (met,tgt,vrs) <- injectEither (startLine h)
   (hs,body)     <- accumHeaders rem
-  -- exec (putStrLn "Got a request with a \{show $ contentLength hs} bytes body")
-  pure (req met tgt hs body)
+  let cl := contentLength hs
+      ct := contentType hs
+  pure $ Just (R met tgt vrs hs cl ct $ checkLength cl body)
 ```
 
 Function `checkLength` limits the number of remaining bytes we read
@@ -218,24 +235,26 @@ from the client to the content length given in the request header.
 If this length exceeds our predefined size limit, we immediately throw
 an exception and abort.
 
-Function `req` just reads some header values and writes everything to
-a `Request` record.
-
 The actual stream processing is done in `assemble`: Given a pull that
 emits the request header one line at a time and returns the remainder
 of the byte stream containing the content body, we first extract the
 start line and try to parse the HTTP method and request target. We
 then accumulate the request headers by invoking `accumHeaders` and
 return everything as the result of a pull that no longer emits any
-values.
+values. A minor detail: Once we [start reusing connections](HTTP11.md)
+we might receive an empty byte sequence as a sign that the connection
+has been closed by the client. We deal with this by returning
+nothing to signal that the corresponding socket needs to be
+closed on our end as well.
 
 The only thing missing is the splitting of the raw byte stream
 into header and body. Here's the code:
 
 ```idris
-request : HTTPStream ByteString -> HTTPPull o Request
+export
+request : HTTPStream ByteString -> HTTPPull o (Maybe Request)
 request req =
-     forceBreakAtSubstring InvalidRequest "\r\n\r\n" req
+     breakAtSubstring pure "\r\n\r\n" req
   |> C.limit HeaderSizeExceeded MaxHeaderSize
   |> lines
   |> assemble
@@ -255,6 +274,7 @@ followed by a status code and an optional status message, which
 we don't provide.
 
 ```idris
+export
 encodeResponse : (status : Nat) -> List (String,String) -> ByteString
 encodeResponse status hs =
   fastConcat $ intersperse "\r\n" $ map fromString $
@@ -262,18 +282,21 @@ encodeResponse status hs =
     map (\(x,y) => "\{x}: \{y}") hs ++
     ["\r\n"]
 
+export
 badRequest : ByteString
 badRequest = encodeResponse 400 []
 
+export
 ok : List (String,String) -> ByteString
 ok = encodeResponse 200
 
-response : Request -> HTTPStream ByteString
-response r = cons resp r.body
+response : Maybe Request -> HTTPStream ByteString
+response Nothing  = pure ()
+response (Just r) = cons resp r.body
   where
     resp : ByteString
     resp = case r.type of
-      Nothing => ok []
+      Nothing => ok [("Content-Length",show r.length)]
       Just t  => ok [("Content-Type",t),("Content-Length",show r.length)]
 ```
 
@@ -286,7 +309,7 @@ We are now ready to handle a single request from start to beginning:
 ```idris
 echo :
      Socket AF_INET
-  -> HTTPPull ByteString Request
+  -> HTTPPull ByteString (Maybe Request)
   -> AsyncStream Poll [Errno] Void
 echo cli p =
   extractErr HTTPErr (writeTo cli (p >>= response)) >>= \case
@@ -339,6 +362,12 @@ main = do
   _ :: t <- getArgs | [] => runProg (prog [])
   runProg (prog t)
 ```
+
+With this simple HTTP server, we can already handle thousands
+of requests per second. In order to speed things up even more,
+we need to reuse connections, however, which inevitably leads
+to HTTP 1.1. In the [next section](HTTP11.md) we are going
+to make the necessary adjustments.
 
 <!-- vi: filetype=idris2:syntax=markdown
 -->

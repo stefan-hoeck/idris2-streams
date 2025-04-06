@@ -591,6 +591,13 @@ out the corresponding streams of bytes, and process them as a single entity
 in constant memory while sparse resources such as file and directory handles
 will be closed for us automatically along the way.
 
+We close this section with a simple runner for the example applications
+we wrote. You can use `pack install-app streams-docs` to install the app
+and decide via command-line arguments, what example to run.
+
+In a [separate section](HTTP.md), we learn how to use idris2-streams to
+write a basic HTTP server.
+
 ```idris
 prog : List String -> Prog Void
 prog []     = throw EINVAL
