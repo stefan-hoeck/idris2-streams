@@ -1,0 +1,12 @@
+package streams-profile
+version = 0.1.0
+authors = "stefan-hoeck"
+
+depends = streams-posix
+        , async-epoll
+
+sourcedir = "src"
+
+main = Main
+
+executable = "streams-profile"
