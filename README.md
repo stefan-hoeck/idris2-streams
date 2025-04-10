@@ -595,7 +595,7 @@ We close this section with a simple runner for the example applications
 we wrote. You can use `pack install-app streams-docs` to install the app
 and decide via command-line arguments, what example to run.
 
-In a [separate section](HTTP.md), we learn how to use idris2-streams to
+In a [separate section](docs/src/HTTP.md), we learn how to use idris2-streams to
 write a basic HTTP server.
 
 ```idris
