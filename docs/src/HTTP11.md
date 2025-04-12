@@ -23,7 +23,7 @@ has been closed by the client:
 ```idris
 response : Maybe Request -> HTTPPull ByteString Bool
 response Nothing  = pure False
-response (Just r) = cons resp r.body $> True
+response (Just r) = cons resp (r.body $> True)
   where
     resp : ByteString
     resp = case r.type of

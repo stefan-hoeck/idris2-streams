@@ -170,24 +170,20 @@ theory a header's value could be spread across several lines.
 For now, we are not going to support this.
 
 ```idris
-hpair : MErr f => Has HTTPErr es => ByteString -> f es (String,String)
-hpair bs =
-  case break (COLON ==) bs of
+headers : List ByteString -> Headers -> Either HTTPErr Headers
+headers []     hs = Right hs
+headers (h::t) hs =
+  case break (58 ==) h of -- 58 is a colon (:)
     (xs,BS (S k) bv) =>
      let name := toLower (toString xs)
          val  := toString (trim $ tail bv)
-      in pure (name, val)
-    _                => throw InvalidRequest
+      in headers t (insert name val hs)
+    _                => Left InvalidRequest
 ```
 
 Given a stream of lists of byte vectors (each byte vector corresponding
 to a single line of the request header), we can use `next` to accumulate
 the set of headers:
-
-```idris
-accumHeaders : HTTPPull (List ByteString) a -> HTTPPull o (Headers,a)
-accumHeaders = C.foldPair insert' empty . evalMap (traverse hpair)
-```
 
 In `accumHeaders`, we use `evalMap` to map the emitted values with
 the possibility of failure and
@@ -213,21 +209,33 @@ We are now ready to assemble the HTTP request from a pull of
 the correct shape:
 
 ```idris
-checkLength : Nat -> HTTPStream ByteString -> HTTPStream ByteString
-checkLength cl p =
-  if cl > MaxContentSize then throw ContentSizeExceeded else C.take cl p
+parseHeader :
+     ByteString
+  -> HTTPStream ByteString
+  -> Either HTTPErr (Maybe Request)
+parseHeader (BS 0 bv) rem = Right Nothing
+parseHeader (BS _ bv) rem =
+  case ByteVect.lines bv of
+    h::ls =>
+      let Right (m,t,v) := startLine h      | Left x => Left x
+          Right hs      := headers ls empty | Left x => Left x
+          cl            := contentLength hs
+          ct            := contentType hs
+       in if cl > MaxContentSize
+             then Left ContentSizeExceeded
+             else Right $ Just (R m t v hs cl ct $ C.take cl rem)
+    []    => Left InvalidRequest
 
-export
-assemble :
-     HTTPPull (List ByteString) (HTTPStream ByteString)
+accumHeader :
+     SnocList ByteString
+  -> HTTPPull ByteString (HTTPStream ByteString)
   -> HTTPPull o (Maybe Request)
-assemble p = Prelude.do
-  Right (h,rem) <- C.uncons p | _ => pure Nothing
-  (met,tgt,vrs) <- injectEither (startLine h)
-  (hs,body)     <- accumHeaders rem
-  let cl := contentLength hs
-      ct := contentType hs
-  pure $ Just (R met tgt vrs hs cl ct $ checkLength cl body)
+accumHeader sb p =
+  assert_total $ P.uncons p >>= \case
+    Left x       => case sb of
+      [<bs] => injectEither (parseHeader bs x)
+      _     => injectEither (parseHeader (fastConcat $ sb <>> []) x)
+    Right (bs,q) => accumHeader (sb:<bs) q
 ```
 
 Function `checkLength` limits the number of remaining bytes we read
@@ -256,8 +264,7 @@ request : HTTPStream ByteString -> HTTPPull o (Maybe Request)
 request req =
      breakAtSubstring pure "\r\n\r\n" req
   |> C.limit HeaderSizeExceeded MaxHeaderSize
-  |> lines
-  |> assemble
+  |> accumHeader [<]
 ```
 
 The header of a HTTP request is separated from the body by a
@@ -278,7 +285,7 @@ export
 encodeResponse : (status : Nat) -> List (String,String) -> ByteString
 encodeResponse status hs =
   fastConcat $ intersperse "\r\n" $ map fromString $
-    "HTTP/1.0 \{show status}" ::
+    "HTTP/1.1 \{show status}" ::
     map (\(x,y) => "\{x}: \{y}") hs ++
     ["\r\n"]
 
@@ -316,10 +323,11 @@ echo cli p =
     Left _   => emit badRequest |> writeTo cli
     Right () => pure ()
 
+covering
 serve : Socket AF_INET -> Async Poll [] ()
 serve cli =
-  assert_total $ mpull $ handleErrors (\(Here x) => stderrLn "\{x}") $
-    finally (close' cli) $
+  flip guarantee (close' cli) $
+    mpull $ handleErrors (\(Here x) => stderrLn "\{x}") $
          bytes cli 0xfff
       |> request
       |> echo cli
@@ -339,6 +347,7 @@ produced by a stream in parallel.
 addr : Bits16 -> IP4Addr
 addr = IP4 [127,0,0,1]
 
+covering
 echoSrv : Bits16 -> (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] Void
 echoSrv port n =
   foreachPar n serve (acceptOn AF_INET SOCK_STREAM (addr port))
@@ -349,6 +358,7 @@ command-line arguments: The port we are listening on as well as
 the maximum number of connections we serve in parallel.
 
 ```idris
+covering
 prog : List String -> Prog [Errno] Void
 prog ["server", port, n] =
   case cast {to = Nat} n of
