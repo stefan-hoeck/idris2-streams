@@ -13,7 +13,6 @@ import public FS.Core
 
 import Data.SnocList
 
-
 %default total
 
 --------------------------------------------------------------------------------
@@ -30,7 +29,7 @@ data UnfoldRes : (r,s,o : Type) -> Type where
 export %inline
 emits : List o -> Stream f es o
 emits []     = pure ()
-emits (h::t) = emit h >> emits t
+emits (h::t) = cons h (emits t)
 
 ||| Emits a list of values as a single chunk.
 export
@@ -65,34 +64,34 @@ eval act = exec act >>= emit
 export
 unfold : (init : s) -> (s -> UnfoldRes r s o) -> Pull f o es r
 unfold init g =
-  assert_total $ case g init of
-    More vals st => emit vals >> unfold st g
+  case g init of
+    More vals st => cons vals (unfold st g)
     Done res      => pure res
-    Last res vals => emit vals $> res
+    Last res vals => cons vals (pure res)
 
 ||| Like `unfold` but produces values via an effectful computation
 ||| until a `Done` or `Last` is returned.
 export
 unfoldEval : (init : s) -> (s -> f es (UnfoldRes r s o)) -> Pull f o es r
 unfoldEval cur act =
-  assert_total $ Exec (act cur) >>= \case
-    More vals st => emit vals >> unfoldEval st act
+  assert_total $ exec (act cur) >>= \case
+    More vals st => cons vals (unfoldEval st act)
     Done res      => pure res
-    Last res vals => emit vals $> res
+    Last res vals => cons vals (pure res)
 
 ||| Produces values via an effectful computation
 ||| until a `Nothing` is returned.
 export
 unfoldEvalMaybe : f es (Maybe o) -> Stream f es o
 unfoldEvalMaybe act =
-  assert_total $ Exec act >>= \case
+  assert_total $ exec act >>= \case
     Nothing => pure ()
-    Just o  => emit o >> unfoldEvalMaybe act
+    Just o  => cons o (unfoldEvalMaybe act)
 
 ||| Infinitely produces chunks of values of the given size
 export
 fill : o -> Pull f o es ()
-fill v = assert_total $ emit v >> fill v
+fill v = cons v (fill v)
 
 ||| An infinite stream of values of type `o` where
 ||| the next value is built from the previous one by
@@ -105,17 +104,12 @@ iterate v f = unfold v (\x => More x $ f x)
 export
 replicate : Nat -> o -> Stream f es o
 replicate 0     _ = pure ()
-replicate (S k) v = emit v >> replicate k v
+replicate (S k) v = cons v (replicate k v)
 
 ||| Infinitely cycles through the given `Pull`
 export
 repeat : Stream f es o -> Pull f o es ()
 repeat v = assert_total $ v >> repeat v
-
-||| Prepends the given output to a pull.
-export %inline
-cons : o -> Pull f o es r -> Pull f o es r
-cons vs p = Output vs >> p
 
 ||| Prepends the given optional output to a pull.
 export %inline
@@ -137,13 +131,6 @@ data BreakInstruction : Type where
 
   ||| Discard the succeeding value
   DropHit : BreakInstruction
-
-||| Splits the first chunk of values from the head of a `Pull`, returning
-||| either the final result or a list of values plus the remainder of the
-||| `Pull`.
-export %inline
-uncons : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
-uncons = Uncons
 
 ||| Like `uncons` but does not consume the chunk
 export
@@ -177,7 +164,7 @@ splitAt 0     p = pure p
 splitAt (S k) p =
   assert_total $ uncons p >>= \case
     Left v      => pure (pure v)
-    Right (v,q) => emit v >> splitAt k q
+    Right (v,q) => cons v (splitAt k q)
 
 ||| Emits only the first `n` values of a `Stream`.
 export %inline
@@ -236,8 +223,8 @@ breakPull orElse g p =
   assert_total $ uncons p >>= \case
     Left r      => pure (orElse r)
     Right (v,q) => case g v of
-      Keep w         => emit w >> breakPull orElse g q
-      Broken pre pst => emitMaybe pre $> consMaybe pst q
+      Keep w         => cons w (breakPull orElse g q)
+      Broken pre pst => consMaybe pre (pure $ consMaybe pst q)
 
 ||| Breaks a pull as soon as the given predicate returns `True`.
 |||
@@ -299,7 +286,7 @@ takeWhileJust = newScope . go
     go p =
       assert_total $ uncons p >>= \case
         Left _      => pure ()
-        Right (Just v,q)  => emit v >> takeWhileJust q
+        Right (Just v,q)  => cons v (takeWhileJust q)
         Right (Nothing,q) => pure ()
 
 ||| Discards values until the given predicate returns `True`.
@@ -333,7 +320,7 @@ mapMaybe f p =
   assert_total $ uncons p >>= \case
     Left x      => pure x
     Right (v,q) => case f v of
-      Just w  => emit w >> mapMaybe f q
+      Just w  => cons w (mapMaybe f q)
       Nothing => mapMaybe f q
 
 ||| Chunk-wise maps the emit of a `Pull`
@@ -349,8 +336,7 @@ evalMap f p =
     Left x       => pure x
     Right (vs,p) => do
       ws <- exec (f vs)
-      emit ws
-      evalMap f p
+      cons ws (evalMap f p)
 
 ||| Chunk-wise effectful mapping of the emit of a `Pull`
 export
@@ -360,8 +346,7 @@ evalMapMaybe f p =
     Left x       => pure x
     Right (v,q) => do
       Just w <- exec (f v) | Nothing => evalMapMaybe f q
-      emit w
-      evalMapMaybe f q
+      cons w (evalMapMaybe f q)
 
 ||| Chunk-wise filters the emit of a `Pull` emitting only the
 ||| values that fulfill the given predicate
@@ -371,7 +356,7 @@ filter pred p =
   assert_total $ uncons p >>= \case
     Left x      => pure x
     Right (v,q) => case pred v of
-      True  => emit v >> filter pred q
+      True  => cons v (filter pred q)
       False => filter pred q
 
 ||| Convenience alias for `filterC (not . pred)`.
@@ -383,7 +368,7 @@ filterNot pred = filter (not . pred)
 ||| marks its end with a `Nothing`.
 export
 endWithNothing : Pull f o es r -> Pull f (Maybe o) es r
-endWithNothing s = mapOutput Just s >>= \res => emit Nothing $> res
+endWithNothing s = mapOutput Just s >>= \res => cons Nothing (pure res)
 
 --------------------------------------------------------------------------------
 -- Folds
@@ -428,7 +413,7 @@ export
 fold : (p -> o -> p) -> p -> Pull f o es r -> Pull f p es r
 fold g v s =
   assert_total $ uncons s >>= \case
-    Left res      => emit v $> res
+    Left res      => cons v (pure res)
     Right (vs,s2) => fold g (g v vs) s2
 
 ||| Like `fold` but instead of emitting the result as a single
@@ -516,7 +501,7 @@ export
 evalFold : (p -> o -> f es p) -> p -> Pull f o es r -> Pull f p es r
 evalFold g v s =
   assert_total $ uncons s >>= \case
-    Left res      => emit v $> res
+    Left res      => cons v (pure res)
     Right (vs,s2) => exec (g v vs) >>= \v2 => evalFold g v2 s2
 
 ||| Like `fold` but instead of emitting the result as a single
@@ -543,7 +528,7 @@ scan : s -> (s -> o -> (p,s)) -> Pull f o es r -> Pull f p es r
 scan s1 f p =
   assert_total $ uncons p >>= \case
     Left res    => pure res
-    Right (v,q) => let (w,s2) := f s1 v in emit w >> scan s2 f q
+    Right (v,q) => let (w,s2) := f s1 v in cons w (scan s2 f q)
 
 ||| General stateful conversion of a `Pull`s emit.
 |||
@@ -555,7 +540,7 @@ scanMaybe s1 f p =
     Nothing => pure s1
     Just g  => uncons p >>= \case
       Left _      => pure s1
-      Right (v,p) => let (w,s2) := g v in emit w >> scanMaybe s2 f p
+      Right (v,p) => let (w,s2) := g v in cons w (scanMaybe s2 f p)
 
 ||| Like `scan` but will possibly also emit the final state.
 export
@@ -567,8 +552,8 @@ scanFull :
   -> Pull f p es r
 scanFull s1 g last p = do
   assert_total $ uncons p >>= \case
-    Left v      => emitMaybe (last s1) $> v
-    Right (v,q) => let (w,s2) := g s1 v in emitMaybe w >> scanFull s2 g last q
+    Left v      => consMaybe (last s1) (pure v)
+    Right (v,q) => let (w,s2) := g s1 v in consMaybe w (scanFull s2 g last q)
 
 ||| Zips the input with a running total, up to but
 ||| not including the current element.
@@ -641,6 +626,6 @@ bind = flip flatMap
 export
 attemptOutput : Pull f o es () -> Pull f (Result es o) fs ()
 attemptOutput p =
-  Att (mapOutput Right p) >>= \case
+  att (mapOutput Right p) >>= \case
     Left x  => emit (Left x)
     Right _ => pure ()

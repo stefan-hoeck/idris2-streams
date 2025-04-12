@@ -14,10 +14,15 @@ nebs : ByteString -> Maybe ByteString
 nebs (BS 0 _) = Nothing
 nebs bs       = Just bs
 
-export
+export %inline
 emitBS : ByteString -> Pull f ByteString es ()
 emitBS (BS 0 _) = pure ()
 emitBS bs       = emit bs
+
+export %inline
+consBS : ByteString -> Pull f ByteString es r -> Pull f ByteString es r
+consBS (BS 0 _) p = p
+consBS bs       p = cons bs p
 
 ||| Appends a newline character (`0x0a`) to every bytestring
 ||| emitted by the stream.
@@ -56,11 +61,11 @@ breakAtSubstring orElse ss = go empty
       -> Pull f ByteString es (Pull f ByteString es r)
     go pre p =
       assert_total $ uncons p >>= \case
-        Left v        => emitBS pre $> orElse v
+        Left v        => consBS pre (pure $ orElse v)
         Right (cur,q) => case breakAtSS ss (pre <+> cur) of
           TooShort x => go x q
-          NoSS x y   => emitBS x >> go y q
-          SS   x y   => emitBS x $> (emitBS y >> q)
+          NoSS x y   => consBS x (go y q)
+          SS   x y   => consBS x (pure $ emitBS y >> q)
 
 ||| Like `breakAtSubstring` but fails with the given error if
 ||| the substring is not encountered.

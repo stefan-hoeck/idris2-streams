@@ -18,17 +18,6 @@ putErr : Deferred World (Result es ()) -> Outcome es () -> Async e [] ()
 putErr def (Error x) = putDeferred def (Left x)
 putErr def _         = pure ()
 
-||| Runs the given pull in a new child scope and interrupts
-||| its evaluation once the given `Deferred` is completed.
--- TODO: We should add support for a deferred result plus error
---       handling here.
-export
-interruptOn :
-     Deferred World a
-  -> Stream (Async e) es o
-  -> Stream (Async e) es o
-interruptOn def p = OnIntr (OScope (I def) p) (pure ())
-
 ||| Concurrently runs the given stream until it either terminates or
 ||| is interrupted by `check`.
 |||

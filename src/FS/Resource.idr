@@ -6,12 +6,6 @@ import public FS.Pull
 
 %default total
 
-||| Acquires a resource that will be released once the current
-||| scope is cleaned up.
-export %inline
-acquire : (acq : f es r) -> (release : r -> f [] ()) -> Pull f o es r
-acquire = Acquire
-
 ||| Like `bracket`, but acquires the resource in the current scope.
 export
 bracketWeak : (f es x) -> (x -> f [] ()) -> (x -> Pull f o es r) -> Pull f o es r

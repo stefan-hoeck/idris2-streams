@@ -5,11 +5,24 @@ import public FS.Scope
 
 import Control.Monad.Elin
 
+import Data.Linear.Deferred
 import Data.Linear.Ref1
 import Data.Maybe
 import Data.SortedMap
+import IO.Async
 
 %default total
+
+-- An effectful computation that will be run when evaluating
+-- a Pull
+data Action :
+     (f  : List Type -> Type -> Type)
+  -> (es : List Type)
+  -> (r  : Type)
+  -> Type where
+  Eval    : (act : f es r) -> Action f es r
+  Acquire : f es r -> (r -> f [] ()) -> Action f es r
+  Close   : Scope f -> Result es r -> Action f es r
 
 --------------------------------------------------------------------------------
 -- Pull Type
@@ -65,7 +78,7 @@ import Data.SortedMap
 ||| type inference got very erratic. For the time being, I therefore decided
 ||| to resort to `assert_total` when defining potentially infinite streams.
 ||| It's not pretty, but it gets the job done.
-public export
+export
 data Pull :
        (f : List Type -> Type -> Type) -- effect type
     -> (o : Type)                      -- output type
@@ -80,10 +93,10 @@ data Pull :
   Err    : HSum es -> Pull f o es r
 
   ||| Constructor for producing a chunk of output values
-  Output : (val : o) -> Pull f o es ()
+  Cons   : (val : o) -> Inf (Pull f o es r) -> Pull f o es r
 
   ||| Wraps an arbitrary effectful computation in a `Pull`
-  Exec   : (act : f es r) -> Pull f o es r
+  Act    : (act : Action f es r) -> Pull f o es r
 
   ||| Unwraps the given child `Pull` until it either produces
   ||| a result or a chunk of output.
@@ -101,15 +114,6 @@ data Pull :
   ||| is used to check, if the scope has been interrupted.
   OScope : Interrupt f -> Pull f o es r -> Pull f o es r
 
-  ||| Safe resource management: Once the given resource has been acquired,
-  ||| it is released via the given cleanup hook once the current scope ends.
-  Acquire : f es r -> (r -> f [] ()) -> Pull f o es r
-
-  ||| Internal: Evaluates the given `Pull` in the given inner scope as
-  ||| long as it produces chunks of output. Switches back to the outer scope
-  ||| once the `Pull` is exhausted.
-  WScope : Pull f o es r -> (inner, outer : ScopeID) -> Pull f o es r
-
   ||| Internal: A pull for returning the current scope
   GScope : Pull f o es (Scope f)
 
@@ -119,7 +123,7 @@ data Pull :
   ||| or merging streams): Both pulls must be run in the outer scope to prevent
   ||| the resources of the second pull to be release early when the first once
   ||| is exhausted. See `stepLeg` and `StepLeg`.
-  IScope : Scope f -> Pull f o es r -> Pull f o es r
+  IScope : Scope f -> (close : Bool) -> Pull f o es r -> Pull f o es r
 
   ||| Continues with the second pull in case the first is interrupted.
   OnIntr : Pull f o es r -> Lazy (Pull f o es r) -> Pull f o es r
@@ -154,12 +158,29 @@ record StepLeg f es o where
 ||| Lifts the given effectful computation into a `Pull`.
 export %inline
 exec : f es r -> Pull f o es r
-exec = Exec
+exec = Act . Eval
+
+||| Acquires a resource that will be released once the current
+||| scope is cleaned up.
+export %inline
+acquire : (acq : f es r) -> (release : r -> f [] ()) -> Pull f o es r
+acquire acq rel = Act $ Acquire acq rel
+
+||| Prepends the given output to a pull.
+export %inline %tcinline
+cons : o -> Inf (Pull f o es r) -> Pull f o es r
+cons = Cons
 
 ||| Emits a single chunk of output.
 export %inline
 emit : o -> Stream f es o
-emit = Output
+emit v = cons v (Val ())
+
+||| Unwraps a `pull` either returning its final result or
+||| its first output together with the remainder of the pull.
+export %inline
+uncons : Pull f o es r -> Pull f q es (Either r (o, Pull f o es r))
+uncons = Uncons
 
 ||| Returns the current evaluation scope.
 |||
@@ -180,7 +201,24 @@ newScope = OScope None
 ||| new combinators and topologies.
 export %inline
 inScope : Scope f -> Pull f o es r -> Pull f o es r
-inScope = IScope
+inScope p = IScope p False
+
+||| Error handling primitive: Wraps a successful result in a `Right`
+||| and an error in a `Left`.
+export %inline
+att : Pull f o es r -> Pull f o fs (Result es r)
+att = Att
+
+||| Runs the given pull in a new child scope and interrupts
+||| its evaluation once the given `Deferred` is completed.
+-- TODO: We should add support for a deferred result plus error
+--       handling here.
+export
+interruptOn :
+     Deferred World a
+  -> Stream (Async e) es o
+  -> Stream (Async e) es o
+interruptOn def p = OnIntr (OScope (I def) p) (Val ())
 
 --------------------------------------------------------------------------------
 -- Interfaces
@@ -202,7 +240,7 @@ MErr (Pull f o) where
 ||| state thread `s`, so does the `Pull` itself.
 export %inline
 ELift1 s f => ELift1 s (Pull f o) where
-  elift1 = Exec . elift1
+  elift1 = exec . elift1
 
 export %inline
 Semigroup (Stream f es o) where
@@ -214,160 +252,288 @@ Monoid (Stream f es o) where
 
 export %inline
 HasIO (f es) => HasIO (Pull f o es) where
-  liftIO = Exec . liftIO
+  liftIO = exec . liftIO
 
 --------------------------------------------------------------------------------
 -- Evaluating Pulls
 --------------------------------------------------------------------------------
 
-||| Result of evaluating a single step of a `Pull f o es r`: It either ends with
-||| a final result and is exhausted, or it produces a chunk of outputput and
-||| a remainder, which will be evaluated next.
-public export
-data StepRes :
-       (f  : List Type -> Type -> Type)
-    -> (o  : Type)
-    -> (es : List Type)
-    -> (r  : Type)
-    -> Type where
-  ||| Stream completed successfully with a result
-  Res : (ss : Scope f) -> (res : Outcome es r) -> StepRes f o es r
+-- The general strategy is to convert a Pull into a running computation
+-- with a stack of items itentifying the tasks that have yet to be
+-- finished. See also `Stack`
+data Item :
+     (f     : List Type -> Type -> Type)
+  -> (o,p   : Type)
+  -> (es,fs : List Type)
+  -> (x,y   : Type)
+  -> Type where
+  -- the continuation of a monadic bind on the stack
+  B : (x -> Pull f o es y) -> Item f o o es es x y
 
-  ||| Stream produced some output
-  Out : (ss : Scope f) -> (chunk : o) -> Pull f o es r -> StepRes f o es r
+  -- `Att` (error handling) on the stack
+  A : Item f o o es fs r (Result es r)
+
+  -- Handling of output (`Uncons`)
+  U : Item f o p es es r (Either r (o, Pull f o es r))
+
+  -- Changing the current evaluation scope (resource management)
+  -- `cl` signifies whether the current scope should be closed and
+  -- its resources cleaned up.
+  S : Scope f -> (cl : Bool) -> Item f o o es es x x
+
+  -- Resumption to use if the current pull has been interrupted.
+  I : Lazy (Pull f o es r) -> Item f o o es es r r
+
+-- Call stack used to store computational steps that are yet to follow.
+data Stack :
+     (f     : List Type -> Type -> Type)
+  -> (o     : Type)
+  -> (es,fs : List Type)
+  -> (x,y   : Type)
+  -> Type where
+  Nil  : Stack f Void es es x x
+  (::) : Item f o p es fs x y -> Stack f p fs gs y z -> Stack f o es gs x z
+
+-- Unfolding of a `Pull`, which either arrives at an effectful
+-- computation (an `Action`) plus a call stack, or a final result.
+data View :
+     (f  : List Type -> Type -> Type)
+  -> (es : List Type)
+  -> (r  : Type)
+  -> Type where
+  VV : Scope f -> Outcome es r -> View f es r
+  VA : Scope f -> Action f es x -> Stack f o es fs x y -> View f fs y
+
+-- Result of `traceOutput`: Output (generated via the `Cons` data constructor)
+-- can *only* be handled via the `Uncons` data constructor. Therefore, whenever
+-- a `Cons` is encountered, the current stack is traversed until we arrive
+-- at a `U` item (representing an `Uncons`), and the previously unfolded Pull
+-- is reassembled during this search. The output plus reassebled pull are then
+-- paired and wrapped in a `Right`.
+record URes (f : List Type -> Type -> Type) (fs : List Type) (y : Type) where
+  constructor UR
+  {0 out, res  : Type}
+  {0 errs : List Type}
+  scope : Scope f
+  cur   : Pull f out errs res
+  stck  : Stack f out errs fs res y
+
+-- Traverses the stack until an `Unfold` (`U` item) is encountered.
+-- The stack's prefix is reassembled into a Pull that is then
+-- used as the continuation together with the current output.
+traceOutput :
+     Scope f
+  -> o
+  -> Pull f o es x
+  -> Stack f o es fs x y
+  -> URes f fs y
+traceOutput sc v p []        = UR sc p []
+traceOutput sc v p (i :: is) =
+  case i of
+    B g       => traceOutput sc v (Bind p g) is
+    A         => traceOutput sc v (Att p) is
+    U         => UR sc (Val $ Right (v, p)) is
+    S prev cl => traceOutput prev v (IScope sc cl p) is
+    I q       => traceOutput sc v (OnIntr p q) is
 
 parameters {0 f      : List Type -> Type -> Type}
            {auto tgt : Target s f}
            (ref      : Ref s (ScopeST f))
 
-  ||| A single evaluation step of a `Pull`.
-  |||
-  ||| Either returns the final result or the next chunk of output
-  ||| paired with the remainder of the `Pull`. Fails with an error in
-  ||| case of an uncaught exception
-  -- Implementation note: This is a pattern match on the different
-  -- data constructors of `Pull`. The `Scope` argument is the resource
-  -- scope we are currently working with.
-  export covering
-  step : Pull f o es r -> Scope f -> f [] (StepRes f o es r)
-  step p sc = do
-    False <- isInterrupted sc.interrupt | True => pure (Res sc Canceled)
-    case p of
-      -- We got a final result, so we just return it.
-      Val res    => pure (Res sc $ Succeeded res)
-
-      -- An exception occured so we raise it in the `f` monad.
-      Err x      => pure (Res sc $ Error x)
-
-      -- The pull produced som output. We return it together with an
-      -- empty continuation.
-      Output val => pure $ Out sc val (pure ())
-
-      -- We evaluate the given effect, wrapping it in a `Res` in
-      -- case it succeeds.
-      Exec act   => Res sc <$> raceInterrupt sc.interrupt act
-
-      -- We step the wrapped pull. In case it produces some output,
-      -- we wrap the output and continuation in a `Res . Right`. In case
-      -- it is exhausted (produces an `Out res` we wrap the `res` in
-      -- a `Res . Left`.
-      Uncons p   => case p of
-        Output v => pure (Res sc $ Succeeded (Right (v, Val ())))
-        Val v    => pure (Res sc $ Succeeded (Left v))
-        Err v    => pure (Res sc $ Error v)
-        _ => step p sc >>= \case
-          Res sc res     => case res of
-            Succeeded r => pure (Res sc $ Succeeded $ Left r)
-            Error x     => pure (Res sc $ Error x)
-            Canceled    => pure (Res sc Canceled)
-          Out sc chunk x => pure (Res sc $ Succeeded $ Right (chunk, x))
-
-      -- Monadic bind: We step the wrapped pull, passing the final result
-      -- to function `g`. In case of some output being emitted, we return
-      -- the output and wrap the continuation again in a `Bind`. In case
-      -- of interruption, we pass on the interruption.
-      Bind x g => case x of
-        Output v => pure (Out sc v (g ()))
-        Val    v => step (g v) sc
-        Err    x => pure (Res sc $ Error x)
-        _     => step x sc >>= \case
-          Res sc o  => case o of
-            Succeeded r => step (g r) sc
-            Error x     => pure (Res sc $ Error x)
-            Canceled    => pure (Res sc Canceled)
-          Out sc v p => pure $ Out sc v (Bind p g)
-
-      -- We try and step the wrapped pull. In case of an error, we wrap
-      -- it in a `Res . Left`. In case of a final result, we return the
-      -- result wrapped ina `Res . Right`. In case of more output,
-      -- the output is returned and the continuation pull is again wrapped
-      -- in an `Att`. This makes sure that the pull produces output until
-      -- the first error or it is exhausted or interrputed.
-      Att x => case x of
-        Output v => pure (Out sc v (Val (Right ())))
-        Val    v => pure (Res sc $ Succeeded $ Right v)
-        Err    x => pure (Res sc $ Succeeded $ Left x)
-        _ => step x sc >>= \case
-          Res sc res     => case res of
-            Succeeded r => pure (Res sc $ Succeeded $ Right r)
-            Error x     => pure (Res sc $ Succeeded $ Left x)
-            Canceled    => pure (Res sc Canceled)
-          Out sc chunk x => pure (Out sc chunk (Att x))
-
-      -- Race completion of the `deferred` value against evaluating
-      -- the given pull. Currently, if the race is canceled, this
-      -- is treated as the pull being interrupted.
-      OnIntr p p2 =>
-        step p sc >>= \case
-          Out sc v q => pure (Out sc v $ OnIntr q p2)
-          Res sc o   => case o of
-            Succeeded v => pure $ Res sc (Succeeded v)
-            Error x     => pure $ Res sc (Error x)
-            Canceled    => step p2 sc
-
-      -- Runs pull in a new child scope. The scope is setup and registered,
-      -- and the result wrapped in a `WScope`.
-      OScope i p =>
-        openScope ref i sc >>= \sc2 =>
-          step (WScope p sc2.id sc.id) sc2
-
-      -- Acquires some resource in the current scope and adds its
-      -- cleanup hook to the current scope.
-      Acquire alloc cleanup => do
-        Right r <- attempt {fs = []} alloc | Left x => pure $ Res sc (Error x)
-        sc2     <- addHook ref sc (cleanup r)
-        pure (Res sc2 $ Succeeded r)
-
-      -- Runs the given pull `p` in scope `id`, switching back to scope `rs`
-      -- once the pull is exhausted.
-      WScope p id rs => do
-        -- We look up scope `id` using the current scope `sc` in case it
-        -- has been deleted. We only close the current scope, if `id` was
-        -- found.
-        (cur,closeAfterUse) <- maybe (sc,False) (,True) <$> findScope ref id
-
-        -- We now try and step pull `p` in the scope we looked up. In case of
-        -- an error, when the scope was interrupted, or when the `Pull` was done,
-        -- we close `cur` (if `closeAfterUse` equals `True`).
-        step p cur >>= \case
-          Out scope hd tl => pure (Out scope hd $ WScope tl id rs)
-          Res outScope o  => do
-            nextScope <- fromMaybe outScope <$> findScope ref rs
-            when closeAfterUse (close ref cur.id)
-            pure $ Res nextScope o
-
-      -- This just returns the current scope.
-      GScope => pure (Res sc $ Succeeded sc)
-
-      -- Continues running the given pull in the given scope.
-      IScope sc2 p => step p sc2
-
+  -- Tail-recursively unfolds a `Pull` placing all continuations on
+  -- the call stack until we either arrive at a final result or at
+  -- an effectful computation (`Action`).
   covering
-  loop : EmptyPull f es r -> Scope f -> f [] (Outcome es r)
-  loop p sc =
-    step p sc >>= \case
-      Res _ v      => pure v
-      Out sc2 _ p2 => loop p2 sc2
+  view :
+       Scope f
+    -> Pull f o es x
+    -> Stack f o es fs x y
+    -> F1 s (View f fs y)
+  view sc p st t =
+    case p of
+      Bind q g => case q of
+        -- This is here for reasons of efficiency: If a `Bind` wraps
+        -- a pure value, the value can be passed to the continuation
+        -- directly. Otherwise, the continuation is put on the stack.
+        Val v => view sc (g v) st t
+        _     => view sc q (B g::st) t
+
+      -- We arrived at a terminal (a result), at it's time to
+      -- pass it to the head of the stack (if any).
+      Val v => case st of
+        h::tl => case h of
+          -- monadic bind: we pass result `v` to continuation `fun`
+          -- and continue from there
+          B fun  => view sc (fun v) tl t
+
+          -- `Uncons`: We arrived at the pull's end, so we pass
+          -- the result wrapped in a `Left` (see the type of `Uncons`)
+          U      => view sc (Val $ Left v) tl t
+
+          -- error handling: there was no error so we wrap the result
+          -- in a `Right`.
+          A      => view sc (Val $ Right v) tl t
+
+          -- Scope handling. In case the current scope needs to be
+          -- closed, we arrived at an effectful computation and return
+          -- it as our result. Otherwise, we just continue with the
+          -- new scope.
+          S s2 b => case b of
+            True  => VA s2 (Close sc $ Right v) tl # t
+            False => view s2 p tl t
+
+          -- Interrupt handling. We were not interrupted, so we just
+          -- continue.
+          I _    => view sc p tl t
+        []    => VV sc (Succeeded v) # t
+
+      -- An error occured. Let's try and handle it.
+      Err v => case st of
+        h::tl => case h of
+          -- We can't continue with the bind, so we drop it and look
+          -- if there is an error handler further down the stack.
+          B _    => view sc (Err v) tl t
+
+          -- We can't continue with the `Uncons`, so we drop it and look
+          -- if there is an error handler further down the stack.
+          U      => view sc (Err v) tl t
+
+          -- We found an error handler, so we wrap the error in a `Left`
+          -- and continue regularily.
+          A      => view sc (Val $ Left v) tl t
+
+          -- Scope handling. In case the current scope needs to be
+          -- closed, we arrived at an effectful computation and return
+          -- it as our result. Otherwise, we just continue with the
+          -- new scope.
+          S s2 b => case b of
+            True  => VA s2 (Close sc $ Left v) tl # t
+            False => view s2 (Err v) tl t
+
+          -- Interrupt handling. We were not interrupted, so we just
+          -- continue.
+          I _    => view sc p tl t
+        []    => VV sc (Error v) # t
+
+      -- Some output was produced. The only way this can be handled
+      -- is by an `Uncons` wrapper, which by now should be on the
+      -- stack. We try to find and continue from there. This will
+      -- reassemble parts of the wrapping pull, so we might go
+      -- back and forth on the stack for some time (until all
+      -- output has been consumed, or consumption is aborted)
+      Cons v q =>
+       let UR sc2 p2 st2 := traceOutput sc v q st
+        in view sc2 p2 st2 t
+
+      -- An effectful computation. We have to stop here and pass control
+      -- to `loop`
+      Act x => VA sc x st # t
+
+      -- We are looking for some output, so we put an uncons handler
+      -- `U` on the stack.
+      Uncons q => view sc q (U :: st) t
+
+      -- Error handling. We put the corresponding item onto the stack
+      -- and continue.
+      Att q    => view sc q (A::st) t
+
+      -- Pull `q` should be run in a new scope. We open a new scope
+      -- and put a note on the stack that the scope should be closed
+      -- when `q` is done.
+      OScope i q =>
+        let s2 # t := openScope ref i sc t
+         in view s2 q (S sc True :: st) t
+
+      -- Pull `q` should be run in the given scope. We put a note
+      -- on the stack that the current scope `sc` should be used
+      -- and `s2` closed (if `b` is `True`) once `q` is done.
+      IScope s2 b q => view s2 q (S sc b :: st) t
+
+      -- We have been asked for the current scope so we wrap it
+      -- in a `Val` and continue.
+      GScope   => view sc (Val sc) st t
+
+      -- An interrupt handler should be put on the stack: `q1`
+      -- will be evaluated and `q2` should be used in its stead in
+      -- case it has been interrupted.
+      OnIntr q1 q2 => view sc q1 (I q2 :: st) t
+
+  -- This is invoked if evaluation of the pull has been interrupted
+  -- by an external event. We look on the stack for an interrupt handler
+  -- (item `I`) or - if none is found - terminate with `Canceled`.
+  covering
+  interrupted : Scope f -> Stack f o es fs x y -> f [] (Outcome fs y)
+
+  -- main run loop: Keeps invoking `view`, executing the actions
+  -- it gets back until a result is found or evaluation of the
+  -- pull interrupted by an external event.
+  covering
+  loop : Scope f -> Pull f o es x -> Stack f o es fs x y -> f [] (Outcome fs y)
+  loop sc p st = Prelude.do
+    -- We check if the current scope has been interrupted
+    -- If that'e the case, we search for an interrupt handler by
+    -- passing control to `interrupted`
+    False <- isInterrupted sc.interrupt | True => interrupted sc st
+
+    -- We unfold the current pull until we either arrive at a final
+    -- result or get an effectful computation we must run in order
+    -- to continue
+    v     <- lift1 (view sc p st)
+    case v of
+      VA sc2 act st2 => case act of
+        -- Effect `act` should be run in monad `f`. This might
+        -- be something long-running (waiting on a timer, listening
+        -- on a socket) so it should be possible to interrupt this.
+        -- TODO: Some (short-running) effects do not require the
+        --       overhead from making them interruptible. We should
+        --       consider adding a boolean flag to the `Eval` constructor.
+        --       The reason this is not already there: It will complicate
+        --       the API that's based on evaluating effects.
+        Eval act => raceInterrupt sc.interrupt act >>= \case
+          Succeeded v => loop sc2 (Val v) st2
+          Error     v => loop sc2 (Err v) st2
+          Canceled    => interrupted sc2 st2
+
+        -- We should acquire a resource that should be later released
+        -- See the notes above about interrupting effects.
+        -- TODO: This currently does not take cancellation (of `Async`)
+        --       into account and should be fixed.
+        Acquire act release => raceInterrupt sc.interrupt act >>= \case
+          Succeeded v => addHook ref sc2 (release v) >> loop sc2 (Val v) st2
+          Error x     => loop sc2 (Err x) st2
+          Canceled    => interrupted sc2 st2
+
+        -- Scope `old` has come to an end and should be closed, thus
+        -- releasing all resources that have been aqcuired within.
+        Close old res => Prelude.do
+          close ref True old.id
+          case res of
+            Right v => loop sc2 (Val v) st2
+            Left  v => loop sc2 (Err v) st2
+
+      -- We are done! Yay!
+      VV sc v => pure v
+
+  -- Implementation of `interrupted`
+  interrupted sc []      = pure Canceled
+  interrupted sc (h::tl) =
+    case h of
+      -- Of course we keep closing scopes and releasing resources!
+      S sc2 True  => close ref True sc.id >> interrupted sc2 tl
+
+      -- Nothing to do except switching to a different scope.
+      S sc2 False => interrupted sc2 tl
+
+      -- We arrived at an interrupt handler and can continue with
+      -- the replacement pull `q`.
+      I q         => loop sc q tl
+
+      -- In all other cases, there is nothing to do. Note: We don't
+      -- use a catch-all pattern here to make sure we don't miss any
+      -- data constructors that might be introduced at a later point.
+      B _         => interrupted sc tl
+      U           => interrupted sc tl
+      A           => interrupted sc tl
 
 parameters {auto mcn : MCancel f}
            {auto tgt : Target s f}
@@ -376,10 +542,10 @@ parameters {auto mcn : MCancel f}
   ||| closing the scope. Use this when the pull was generated from
   ||| an outer scope that is still in use.
   export covering
-  pullIn : Scope f -> EmptyPull f es r -> f [] (Outcome es r)
+  pullIn : Scope f -> Pull f Void es r -> f [] (Outcome es r)
   pullIn sc p = do
     ref <- scopes
-    loop ref p sc
+    loop ref sc p []
 
   ||| Runs a `Pull` to completion, eventually producing
   ||| a value of type `r`.
@@ -389,18 +555,49 @@ parameters {auto mcn : MCancel f}
   |||       `Async` and racing it with a cancelation thread (for instance,
   |||       by waiting for an operating system signal).
   export covering
-  pull : EmptyPull f es r -> f [] (Outcome es r)
+  pull : Pull f Void es r -> f [] (Outcome es r)
   pull p =
     bracket newScope
-      (\(sc,ref) => loop ref p sc)
-      (\(sc,ref) => close ref sc.id)
+      (\(sc,ref) => loop ref sc p [])
+      (\(sc,ref) => close ref False sc.id)
 
   ||| Like `pull` but without the possibility of failure. Returns `neutral`
   ||| in case the stream was interrupted.
   export covering
-  mpull : Monoid r => EmptyPull f [] r -> f [] r
+  mpull : Monoid r => Pull f Void [] r -> f [] r
   mpull p =
     pull p >>= \case
       Succeeded res => pure res
       Canceled      => pure neutral
       Error x impossible
+
+-- logP : Pull f o es x -> String
+-- logP (Val val) = "Val"
+-- logP (Err err) = "Err"
+-- logP (Cons val y) = "Cons"
+-- logP (Act act) = "Act"
+-- logP (Uncons y) = "Uncons"
+-- logP (Att y) = "Att"
+-- logP (Bind p g) = "Bind"
+-- logP (OScope _ y) = "OScope"
+-- logP GScope = "GScope"
+-- logP (IScope _ y z) = "IScope"
+-- logP (OnIntr _ _) = "OnIntr"
+--
+-- logI  : Item f o p es fs x y -> String
+-- logI (B g) = "B"
+-- logI A = "A"
+-- logI U = "U"
+-- logI (S z cl) = "S"
+-- logI (I _) = "I"
+--
+-- logIS : Stack f o es fs x y -> String
+-- logIS [] = ""
+-- logIS (h::tl) = ", \{logI h}\{logIS tl}"
+--
+-- logST : Stack f o es fs x y -> String
+-- logST [] = "[]"
+-- logST (i::is) = "[\{logI i}\{logIS is}]"
+--
+-- log : Pull f o es x -> Stack f o es fs x y -> String
+-- log p st = "\{logP p}: \{logST st}"
