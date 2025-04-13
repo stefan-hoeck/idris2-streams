@@ -223,7 +223,7 @@ parseHeader (BS _ bv) rem =
           ct            := contentType hs
        in if cl > MaxContentSize
              then Left ContentSizeExceeded
-             else Right $ Just (R m t v hs cl ct $ C.take cl rem)
+             else Right $ Just (R m t v hs cl ct $ pure ()) -- TODO: Fix this
     []    => Left InvalidRequest
 
 accumHeader :
