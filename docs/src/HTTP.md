@@ -223,7 +223,7 @@ parseHeader (BS _ bv) rem =
           ct            := contentType hs
        in if cl > MaxContentSize
              then Left ContentSizeExceeded
-             else Right $ Just (R m t v hs cl ct $ pure ()) -- TODO: Fix this
+             else Right $ Just (R m t v hs cl ct $ C.take cl rem)
     []    => Left InvalidRequest
 
 accumHeader :
@@ -297,13 +297,17 @@ export
 ok : List (String,String) -> ByteString
 ok = encodeResponse 200
 
+export
+hello : ByteString
+hello = ok [("Content-Length","0")]
+
 response : Maybe Request -> HTTPStream ByteString
 response Nothing  = pure ()
 response (Just r) = cons resp r.body
   where
     resp : ByteString
     resp = case r.type of
-      Nothing => ok [("Content-Length",show r.length)]
+      Nothing => hello
       Just t  => ok [("Content-Type",t),("Content-Length",show r.length)]
 ```
 

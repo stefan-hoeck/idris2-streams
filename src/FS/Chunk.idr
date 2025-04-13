@@ -139,6 +139,7 @@ parameters {auto chnk : Chunk c o}
   ||| Emits the first `n` elements of a `Pull`, returning the remainder.
   export %inline
   take : Nat -> Pull f c es r -> Pull f c es ()
+  take 0 = const $ pure ()
   take n = ignore . newScope . Chunk.splitAt n
 
   ||| Like `take` but limits the number of emitted values.

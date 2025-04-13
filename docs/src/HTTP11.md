@@ -27,7 +27,7 @@ response (Just r) = cons resp (r.body $> True)
   where
     resp : ByteString
     resp = case r.type of
-      Nothing => ok [("Content-Length",show r.length)]
+      Nothing => hello
       Just t  => ok [("Content-Type",t),("Content-Length",show r.length)]
 
 echo :
