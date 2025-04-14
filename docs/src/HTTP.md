@@ -10,7 +10,6 @@ different parts of the stream individually. Let's get started.
 module HTTP
 
 import public Data.SortedMap
-import Derive.Prelude
 import public FS.Posix
 import public FS.Socket
 
@@ -18,6 +17,8 @@ import public IO.Async.Loop.Posix
 import public IO.Async.Loop.Epoll
 
 import public System
+
+import Derive.Prelude
 
 %default total
 %language ElabReflection
