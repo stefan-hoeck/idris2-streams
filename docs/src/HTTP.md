@@ -173,26 +173,13 @@ For now, we are not going to support this.
 headers : List ByteString -> Headers -> Either HTTPErr Headers
 headers []     hs = Right hs
 headers (h::t) hs =
-  case break (58 ==) h of -- 58 is a colon (:)
+  case break (COLON ==) h of
     (xs,BS (S k) bv) =>
      let name := toLower (toString xs)
          val  := toString (trim $ tail bv)
       in headers t (insert name val hs)
     _                => Left InvalidRequest
 ```
-
-Given a stream of lists of byte vectors (each byte vector corresponding
-to a single line of the request header), we can use `next` to accumulate
-the set of headers:
-
-In `accumHeaders`, we use `evalMap` to map the emitted values with
-the possibility of failure and
-`foldPair` to return the accumulate result together with the
-other result of the pull. In case no set of headers was accumulated,
-we abort with an error. Please note, that calling `foldPair` to accumulate
-all values in a stream is somewhat risky especially if the result grows
-with the number of accumulated values. We are safe here, however, since
-we are going to limit the header to `MaxHeaderSize` bytes.
 
 Next, we need the ability to extract values for a couple of specific
 headers (header names in HTTP are case insensitive):
@@ -217,13 +204,13 @@ parseHeader (BS 0 bv) rem = Right Nothing
 parseHeader (BS _ bv) rem =
   case ByteVect.lines bv of
     h::ls =>
-      let Right (m,t,v) := startLine h      | Left x => Left x
-          Right hs      := headers ls empty | Left x => Left x
-          cl            := contentLength hs
-          ct            := contentType hs
-       in if cl > MaxContentSize
-             then Left ContentSizeExceeded
-             else Right $ Just (R m t v hs cl ct $ C.take cl rem)
+     let Right (m,t,v) := startLine h      | Left x => Left x
+         Right hs      := headers ls empty | Left x => Left x
+         cl            := contentLength hs
+         ct            := contentType hs
+      in if cl > MaxContentSize
+            then Left ContentSizeExceeded
+            else Right $ Just (R m t v hs cl ct $ C.take cl rem)
     []    => Left InvalidRequest
 
 accumHeader :
