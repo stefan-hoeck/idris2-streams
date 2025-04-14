@@ -425,6 +425,21 @@ foldPair g v s =
     Left res      => pure (v, res)
     Right (vs,s2) => foldPair g (g v vs) s2
 
+||| Like `foldPair` but with a function that can fail.
+export
+foldPairE :
+     {auto has : Has e es}
+  -> (p -> o -> Either e p)
+  -> p
+  -> Pull f o es r
+  -> Pull f q es (p,r)
+foldPairE g v s =
+  assert_total $ uncons s >>= \case
+    Left res      => pure (v, res)
+    Right (vs,s2) => case g v vs of
+      Right v2 => foldPairE g v2 s2
+      Left  x  => throw x
+
 ||| Convenience version of `foldPair` for working on streams.
 export %inline
 foldGet : (p -> o -> p) -> p -> Stream f es o -> Pull f q es p

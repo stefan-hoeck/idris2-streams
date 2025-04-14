@@ -171,14 +171,14 @@ theory a header's value could be spread across several lines.
 For now, we are not going to support this.
 
 ```idris
-headers : List ByteString -> Headers -> Either HTTPErr Headers
-headers []     hs = Right hs
-headers (h::t) hs =
+headers : Headers -> List ByteString -> Either HTTPErr Headers
+headers hs []     = Right hs
+headers hs (h::t) =
   case break (COLON ==) h of
     (xs,BS (S k) bv) =>
      let name := toLower (toString xs)
          val  := toString (trim $ tail bv)
-      in headers t (insert name val hs)
+      in headers (insert name val hs) t
     _                => Left InvalidRequest
 ```
 
@@ -197,50 +197,33 @@ We are now ready to assemble the HTTP request from a pull of
 the correct shape:
 
 ```idris
-parseHeader :
-     ByteString
-  -> HTTPStream ByteString
-  -> Either HTTPErr (Maybe Request)
-parseHeader (BS 0 bv) rem = Right Nothing
-parseHeader (BS _ bv) rem =
-  case ByteVect.lines bv of
-    h::ls =>
-     let Right (m,t,v) := startLine h      | Left x => Left x
-         Right hs      := headers ls empty | Left x => Left x
-         cl            := contentLength hs
-         ct            := contentType hs
-      in if cl > MaxContentSize
-            then Left ContentSizeExceeded
-            else Right $ Just (R m t v hs cl ct $ C.take cl rem)
-    []    => Left InvalidRequest
-
-accumHeader :
-     SnocList ByteString
-  -> HTTPPull ByteString (HTTPStream ByteString)
+export
+assemble :
+     HTTPPull (List ByteString) (HTTPStream ByteString)
   -> HTTPPull o (Maybe Request)
-accumHeader sb p =
-  assert_total $ P.uncons p >>= \case
-    Left x       => case sb of
-      [<bs] => injectEither (parseHeader bs x)
-      _     => injectEither (parseHeader (fastConcat $ sb <>> []) x)
-    Right (bs,q) => accumHeader (sb:<bs) q
+assemble p = Prelude.do
+  Right (h,rem) <- C.uncons p | _ => pure Nothing
+  (met,tgt,vrs) <- injectEither (startLine h)
+  (hs,body)     <- foldPairE headers empty rem
+  let cl := contentLength hs
+      ct := contentType hs
+  when (cl > MaxContentSize) (throw ContentSizeExceeded)
+  pure $ Just (R met tgt vrs hs cl ct $ C.take cl body)
 ```
 
-Function `checkLength` limits the number of remaining bytes we read
-from the client to the content length given in the request header.
-If this length exceeds our predefined size limit, we immediately throw
-an exception and abort.
+Given a pull that emits the request header one line at a time and returns
+the remainder of the byte stream containing the content body, we first
+extract the start line and try to parse the HTTP method and request target
+using function `uncons` followed by the `startline` parser. We
+then accumulate the request headers by using `foldPairE` over `headers`.
+This returns everything as the result of a pull that no longer emits any
+values. Finally, we validate the content length and return everything
+wrapped up in a `Request` data type.
 
-The actual stream processing is done in `assemble`: Given a pull that
-emits the request header one line at a time and returns the remainder
-of the byte stream containing the content body, we first extract the
-start line and try to parse the HTTP method and request target. We
-then accumulate the request headers by invoking `accumHeaders` and
-return everything as the result of a pull that no longer emits any
-values. A minor detail: Once we [start reusing connections](HTTP11.md)
+A minor detail: Once we [start reusing connections](HTTP11.md)
 we might receive an empty byte sequence as a sign that the connection
 has been closed by the client. We deal with this by returning
-nothing to signal that the corresponding socket needs to be
+`Nothing` to signal that the corresponding socket needs to be
 closed on our end as well.
 
 The only thing missing is the splitting of the raw byte stream
@@ -252,7 +235,8 @@ request : HTTPStream ByteString -> HTTPPull o (Maybe Request)
 request req =
      breakAtSubstring pure "\r\n\r\n" req
   |> C.limit HeaderSizeExceeded MaxHeaderSize
-  |> accumHeader [<]
+  |> lines
+  |> assemble
 ```
 
 The header of a HTTP request is separated from the body by a
