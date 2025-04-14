@@ -10,7 +10,6 @@ different parts of the stream individually. Let's get started.
 module HTTP
 
 import public Data.SortedMap
-import Derive.Prelude
 import public FS.Posix
 import public FS.Socket
 
@@ -18,6 +17,8 @@ import public IO.Async.Loop.Posix
 import public IO.Async.Loop.Epoll
 
 import public System
+
+import Derive.Prelude
 
 %default total
 %language ElabReflection
@@ -170,33 +171,16 @@ theory a header's value could be spread across several lines.
 For now, we are not going to support this.
 
 ```idris
-hpair : MErr f => Has HTTPErr es => ByteString -> f es (String,String)
-hpair bs =
-  case break (COLON ==) bs of
+headers : Headers -> List ByteString -> Either HTTPErr Headers
+headers hs []     = Right hs
+headers hs (h::t) =
+  case break (COLON ==) h of
     (xs,BS (S k) bv) =>
      let name := toLower (toString xs)
          val  := toString (trim $ tail bv)
-      in pure (name, val)
-    _                => throw InvalidRequest
+      in headers (insert name val hs) t
+    _                => Left InvalidRequest
 ```
-
-Given a stream of lists of byte vectors (each byte vector corresponding
-to a single line of the request header), we can use `next` to accumulate
-the set of headers:
-
-```idris
-accumHeaders : HTTPPull (List ByteString) a -> HTTPPull o (Headers,a)
-accumHeaders = C.foldPair insert' empty . evalMap (traverse hpair)
-```
-
-In `accumHeaders`, we use `evalMap` to map the emitted values with
-the possibility of failure and
-`foldPair` to return the accumulate result together with the
-other result of the pull. In case no set of headers was accumulated,
-we abort with an error. Please note, that calling `foldPair` to accumulate
-all values in a stream is somewhat risky especially if the result grows
-with the number of accumulated values. We are safe here, however, since
-we are going to limit the header to `MaxHeaderSize` bytes.
 
 Next, we need the ability to extract values for a couple of specific
 headers (header names in HTTP are case insensitive):
@@ -213,10 +197,6 @@ We are now ready to assemble the HTTP request from a pull of
 the correct shape:
 
 ```idris
-checkLength : Nat -> HTTPStream ByteString -> HTTPStream ByteString
-checkLength cl p =
-  if cl > MaxContentSize then throw ContentSizeExceeded else C.take cl p
-
 export
 assemble :
      HTTPPull (List ByteString) (HTTPStream ByteString)
@@ -224,27 +204,26 @@ assemble :
 assemble p = Prelude.do
   Right (h,rem) <- C.uncons p | _ => pure Nothing
   (met,tgt,vrs) <- injectEither (startLine h)
-  (hs,body)     <- accumHeaders rem
+  (hs,body)     <- foldPairE headers empty rem
   let cl := contentLength hs
       ct := contentType hs
-  pure $ Just (R met tgt vrs hs cl ct $ checkLength cl body)
+  when (cl > MaxContentSize) (throw ContentSizeExceeded)
+  pure $ Just (R met tgt vrs hs cl ct $ C.take cl body)
 ```
 
-Function `checkLength` limits the number of remaining bytes we read
-from the client to the content length given in the request header.
-If this length exceeds our predefined size limit, we immediately throw
-an exception and abort.
+Given a pull that emits the request header one line at a time and returns
+the remainder of the byte stream containing the content body, we first
+extract the start line and try to parse the HTTP method and request target
+using function `uncons` followed by the `startline` parser. We
+then accumulate the request headers by using `foldPairE` over `headers`.
+This returns everything as the result of a pull that no longer emits any
+values. Finally, we validate the content length and return everything
+wrapped up in a `Request` data type.
 
-The actual stream processing is done in `assemble`: Given a pull that
-emits the request header one line at a time and returns the remainder
-of the byte stream containing the content body, we first extract the
-start line and try to parse the HTTP method and request target. We
-then accumulate the request headers by invoking `accumHeaders` and
-return everything as the result of a pull that no longer emits any
-values. A minor detail: Once we [start reusing connections](HTTP11.md)
+A minor detail: Once we [start reusing connections](HTTP11.md)
 we might receive an empty byte sequence as a sign that the connection
 has been closed by the client. We deal with this by returning
-nothing to signal that the corresponding socket needs to be
+`Nothing` to signal that the corresponding socket needs to be
 closed on our end as well.
 
 The only thing missing is the splitting of the raw byte stream
@@ -278,7 +257,7 @@ export
 encodeResponse : (status : Nat) -> List (String,String) -> ByteString
 encodeResponse status hs =
   fastConcat $ intersperse "\r\n" $ map fromString $
-    "HTTP/1.0 \{show status}" ::
+    "HTTP/1.1 \{show status}" ::
     map (\(x,y) => "\{x}: \{y}") hs ++
     ["\r\n"]
 
@@ -290,13 +269,17 @@ export
 ok : List (String,String) -> ByteString
 ok = encodeResponse 200
 
+export
+hello : ByteString
+hello = ok [("Content-Length","0")]
+
 response : Maybe Request -> HTTPStream ByteString
 response Nothing  = pure ()
 response (Just r) = cons resp r.body
   where
     resp : ByteString
     resp = case r.type of
-      Nothing => ok [("Content-Length",show r.length)]
+      Nothing => hello
       Just t  => ok [("Content-Type",t),("Content-Length",show r.length)]
 ```
 
@@ -316,10 +299,11 @@ echo cli p =
     Left _   => emit badRequest |> writeTo cli
     Right () => pure ()
 
+covering
 serve : Socket AF_INET -> Async Poll [] ()
 serve cli =
-  assert_total $ mpull $ handleErrors (\(Here x) => stderrLn "\{x}") $
-    finally (close' cli) $
+  flip guarantee (close' cli) $
+    mpull $ handleErrors (\(Here x) => stderrLn "\{x}") $
          bytes cli 0xfff
       |> request
       |> echo cli
@@ -339,6 +323,7 @@ produced by a stream in parallel.
 addr : Bits16 -> IP4Addr
 addr = IP4 [127,0,0,1]
 
+covering
 echoSrv : Bits16 -> (n : Nat) -> (0 p : IsSucc n) => Prog [Errno] Void
 echoSrv port n =
   foreachPar n serve (acceptOn AF_INET SOCK_STREAM (addr port))
@@ -349,6 +334,7 @@ command-line arguments: The port we are listening on as well as
 the maximum number of connections we serve in parallel.
 
 ```idris
+covering
 prog : List String -> Prog [Errno] Void
 prog ["server", port, n] =
   case cast {to = Nat} n of

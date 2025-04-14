@@ -6,6 +6,7 @@
 ||| from `FS.Pull`.
 module FS.Chunk
 
+import FS.Core as P
 import FS.Pull as P
 import Data.List
 import Data.Maybe
@@ -132,12 +133,13 @@ parameters {auto chnk : Chunk c o}
     assert_total $ P.uncons p >>= \case
       Left v      => pure (pure v)
       Right (vs,q) => case splitChunkAt k vs of
-        Middle pre post => emit pre $> cons post q
-        All n           => emit vs >> Chunk.splitAt n q
+        Middle pre post => cons pre (pure $ cons post q)
+        All n           => cons vs (Chunk.splitAt n q)
 
   ||| Emits the first `n` elements of a `Pull`, returning the remainder.
   export %inline
   take : Nat -> Pull f c es r -> Pull f c es ()
+  take 0 = const $ pure ()
   take n = ignore . newScope . Chunk.splitAt n
 
   ||| Like `take` but limits the number of emitted values.
