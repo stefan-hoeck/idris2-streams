@@ -48,14 +48,17 @@ the connection has been closed:
 ```idris
 covering
 serve : Socket AF_INET -> Async Poll [] ()
-serve cli = guarantee tillFalse (close' cli)
+serve cli = Prelude.do
+  (sc,_) <- newScope
+  guarantee (tillFalse sc) (close' cli)
+
   where
     covering
-    tillFalse : Async Poll [] ()
-    tillFalse =
-      pull (bytes cli 0xfff |> request |> echo cli) >>= \case
+    tillFalse : Scope (Async Poll) -> Async Poll [] ()
+    tillFalse sc =
+      pullIn sc (bytes cli 0xff |> request |> echo cli) >>= \case
         Succeeded False => pure ()
-        Succeeded True  => cede >> tillFalse
+        Succeeded True  => cede >> tillFalse sc
         Error (Here x)  => stderrLn "\{x}"
         Canceled        => pure ()
 ```
