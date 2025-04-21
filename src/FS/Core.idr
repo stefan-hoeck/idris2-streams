@@ -36,7 +36,7 @@ data Action :
 |||
 ||| A `Pull` is a monad with relation to `r`, so a sequencing of `Pull`s
 ||| via bind `(>>=)` means a sequencing of the chunks of output generated
-||| a long the way. For instance, the following `Pull` will produce the
+||| along the way. For instance, the following `Pull` will produce the
 ||| values `[1,2,3,4,5,6]` when being run:
 |||
 ||| ```idris2
@@ -62,7 +62,7 @@ data Action :
 ||| as a pure computation, for instance when using `Control.Monad.Elin`.
 |||
 ||| Most of the time, however, we are interested in streams that produce
-||| arbitrary side-effects, and an I / O monad such as `IO.Async` is required.
+||| arbitrary side-effects, and an I/O monad such as `IO.Async` is required.
 |||
 ||| A note on totality: Theoretically, we should be able define `Bind` as follows:
 |||

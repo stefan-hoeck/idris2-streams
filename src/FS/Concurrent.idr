@@ -108,7 +108,7 @@ parameters (chnl : Channel o)
   child : AsyncStream e es o -> Async e es (Fiber [] ())
   child s = foreach (ignore . send chnl) s |> parrunCase sc done out
 
-  -- starts running all input streams in parallel, and reads chunks of
+  -- Starts running all input streams in parallel, and reads chunks of
   -- output from the bounded queue `que`.
   merged : List (AsyncStream e es o) -> AsyncStream e es o
   merged ss =
@@ -246,24 +246,24 @@ parJoin :
 parJoin maxOpen out = do
   sc <- scope
 
-  -- signals exhaustion of the output stream (for instance, due
+  -- Signals exhaustion of the output stream (for instance, due
   -- to a `take n`). It will interrupt evaluation of the
   -- input stream and all child streams.
   done      <- deferredOf {s = World} (Result es ())
 
-  -- concurrent slots available. child streams will wait on this
+  -- Concurrent slots available. Child streams will wait on this
   -- before being started.
   available <- semaphore maxOpen
 
   running   <- signal 1
 
-  -- the input channel used for the result stream. it will be
+  -- The input channel used for the result stream. It will be
   -- closed when the last child was exhausted.
   output    <- channelOf o 0
 
   fbr       <- exec $ outer done available running output sc out
-  -- the resulting stream should cleanup resources when it is done.
-  -- it should also finalize `done`.
+  -- The resulting stream should cleanup resources when it is done.
+  -- It should also finalize `done`.
 
   finally
     (putDeferred done (Right ()) >> wait fbr)
@@ -277,7 +277,7 @@ foreachPar :
   -> (outer      : AsyncPull e o es r)
   -> AsyncPull e q es r
 foreachPar maxOpen sink outer = do
-  -- concurrent slots available. child streams will wait on this
+  -- Concurrent slots available. Child streams will wait on this
   -- before being started.
   available <- semaphore maxOpen
 
