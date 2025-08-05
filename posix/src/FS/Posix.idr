@@ -105,9 +105,21 @@ toList : ByteString -> List ByteString
 toList (BS 0 _) = []
 toList bs       = [bs]
 
+emBufNonEmpty : EMBuffer -> Maybe EMBuffer
+emBufNonEmpty (0 ** _) = Nothing
+emBufNonEmpty x        = Just x
+
 parameters {0    es  : List Type}
            {auto pol : PollH e}
            {auto has : Has Errno es}
+
+  ||| Streams chunks of bytes into a pre-allocated buffer.
+  |||
+  ||| This uses non-blocking I/O, so it can also be used for reading from pipes
+  ||| such as standard input.
+  export %inline
+  bytesRaw : FileDesc a => a -> Buf -> AsyncStream e es EMBuffer
+  bytesRaw fd buf = unfoldEvalMaybe $ emBufNonEmpty <$> readRawNb fd buf
 
 
   ||| Streams chunks of byte of at most the given size from the given
@@ -130,6 +142,13 @@ parameters {0    es  : List Type}
   readBytes : String -> AsyncStream e es ByteString
   readBytes path =
     resource (openFile path O_RDONLY 0) $ \fd => bytes fd 0xffff
+
+  ||| Tries to open the given file and starts reading chunks of bytes
+  ||| from the created file descriptor.
+  export %inline
+  readRawBytes : Buf -> String -> AsyncStream e es EMBuffer
+  readRawBytes buf path =
+    resource (openFile path O_RDONLY 0) $ \fd => bytesRaw fd buf
 
   ||| Streams the content of a directory entry
   export %inline
