@@ -139,9 +139,12 @@ parameters {0    es  : List Type}
   ||| Tries to open the given file and starts reading chunks of bytes
   ||| from the created file descriptor.
   export %inline
-  readBytes : String -> AsyncStream e es ByteString
+  readBytes :
+       {default 0xffff size : Bits32}
+    -> String
+    -> AsyncStream e es ByteString
   readBytes path =
-    resource (openFile path O_RDONLY 0) $ \fd => bytes fd 0xffff
+    resource (openFile path O_RDONLY 0) $ \fd => bytes fd size
 
   ||| Tries to open the given file and starts reading chunks of bytes
   ||| from the created file descriptor.
