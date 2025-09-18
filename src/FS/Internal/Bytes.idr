@@ -44,6 +44,13 @@ splitNL x (BS n bs) =
     MkBreakRes l1 0      b1 _  prf => (Nothing, x <+> BS l1 b1)
     MkBreakRes l1 (S l2) b1 b2 prf => ls [<x <+> BS l1 b1] l2 (tail b2)
 
+export
+breakLastNL : ByteString -> ByteString -> (Maybe ByteString, ByteString)
+breakLastNL x (BS n bs) =
+  case breakEnd (0x0a ==) bs of
+    MkBreakRes 0      l2 b1 b2 prf => (Nothing, x <+> BS l2 b2)
+    MkBreakRes (S l1) l2 b1 b2 prf => (Just (x <+> BS _ (init b1)), BS l2 b2)
+
 namespace UTF8
   ||| The number of continuation bytes following a UTF-8 leading byte.
   |||
