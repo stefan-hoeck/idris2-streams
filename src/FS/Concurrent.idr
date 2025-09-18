@@ -269,6 +269,41 @@ parJoin maxOpen out = do
     (putDeferred done (Right ()) >> wait fbr)
     (interruptOn done (receive output))
 
+||| Uses `parJoin` to map the given function over each emitted output
+||| in parallel.
+export
+parMapE :
+     (maxOpen    : Nat)
+  -> {auto 0 prf : IsSucc maxOpen}
+  -> (fun        : o -> Result es p)
+  -> (outer      : AsyncStream e es o)
+  -> AsyncStream e es p
+parMapE maxOpen fun = parJoin maxOpen . Pull.mapOutput run
+  where
+    run : o -> AsyncStream e es p
+    run o = pure o >>= either fail emit . fun
+
+||| Like `parMapE`, but injects the error first.
+export
+parMapI :
+     {auto has   : Has x es}
+  -> (maxOpen    : Nat)
+  -> {auto 0 prf : IsSucc maxOpen}
+  -> (fun        : o -> Either x p)
+  -> (outer      : AsyncStream e es o)
+  -> AsyncStream e es p
+parMapI maxOpen fun = parMapE maxOpen (mapFst inject . fun)
+
+||| Like `parMapE`, but for a function that cannot fail.
+export
+parMap :
+     (maxOpen    : Nat)
+  -> {auto 0 prf : IsSucc maxOpen}
+  -> (fun        : o -> p)
+  -> (outer      : AsyncStream e es o)
+  -> AsyncStream e es p
+parMap maxOpen fun = parMapE maxOpen (Right . fun)
+
 export
 foreachPar :
      (maxOpen    : Nat)
