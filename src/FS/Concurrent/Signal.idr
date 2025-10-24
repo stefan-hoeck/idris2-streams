@@ -2,6 +2,7 @@ module FS.Concurrent.Signal
 
 import Data.Linear.Deferred
 import Data.Linear.Ref1
+import Data.Linear.Traverse1
 
 import FS.Pull
 
@@ -16,18 +17,20 @@ record ST a where
   listeners : List (Once World (a,Nat))
 
 %inline
-putImpl : a -> ST a -> (ST a, Async e es ())
-putImpl v (S _ lst []) = (S v (S lst) [], pure ())
+putImpl : a -> ST a -> (ST a, IO1 ())
+putImpl v (S _ lst []) = (S v (S lst) [], (() # ))
 putImpl v (S _ lst ls) =
   let n := S lst
-   in (S v n [], traverse_ (`putOnce` (v,n)) ls)
+   in (S v n [], traverse1_ (\o => putOnce1 o (v,n)) ls)
 
 %inline
-updImpl : (a -> (a,b)) -> ST a -> (ST a, Async e es b)
+updImpl : (a -> (a,b)) -> ST a -> (ST a, IO1 b)
 updImpl f (S cur lst ls) =
   let n     := S lst
       (v,r) := f cur
-   in (S v n [], traverse_ (`putOnce` (v,n)) ls $> r)
+   in ( S v n []
+      , \t => let _ # t := traverse1_ (\o => putOnce1 o (v,n)) ls t in r # t
+      )
 
 %inline
 nextImpl :
@@ -58,28 +61,48 @@ get (SR ref) = value <$> readref ref
 
 ||| Writes the current value to the signal.
 export
-put : SignalRef a -> (v : a) -> Async e es ()
-put (SR ref) v = do
-  act <- update ref (putImpl v)
-  act
+put1 : SignalRef a -> (v : a) -> IO1 ()
+put1 (SR ref) v t =
+ let act # t := casupdate1 ref (putImpl v) t
+  in act t
+
+||| Lifted version of `put1`.
+export %inline
+put : Lift1 World f => SignalRef a -> (v : a) -> f ()
+put r = lift1 . put1 r
 
 ||| Updates the value stored in the signal with the given function
 ||| and returns the second result of the computation.
 export
-update : SignalRef a -> (f : a -> (a,b)) -> Async e es b
-update (SR ref) f = do
-  act <- update ref (updImpl f)
-  act
+update1 : SignalRef a -> (g : a -> (a,b)) -> IO1 b
+update1 (SR ref) g t =
+ let act # t := casupdate1 ref (updImpl g) t
+  in act t
+
+||| Lifted version of `update1`.
+export %inline
+update : Lift1 World f => SignalRef a -> (g : a -> (a,b)) -> f b
+update r = lift1 . update1 r
 
 ||| Updates the value stored in the signal.
 export %inline
-modify : SignalRef a -> (f : a -> a) -> Async e es ()
-modify s f = update s (\v => (f v, ()))
+modify1 : SignalRef a -> (g : a -> a) -> IO1 ()
+modify1 s g = update1 s (\v => (g v, ()))
+
+||| Lifted version of `modify1`.
+export %inline
+modify : Lift1 World f => SignalRef a -> (g : a -> a) -> f ()
+modify r = lift1 . modify1 r
 
 ||| Updates the value stored in the signal and returns the result.
 export %inline
-updateAndGet : SignalRef a -> (f : a -> a) -> Async e es a
-updateAndGet s f = update s (\v => let w := f v in (w,w))
+updateAndGet1 : SignalRef a -> (g : a -> a) -> IO1 a
+updateAndGet1 s g = update1 s (\v => let w := g v in (w,w))
+
+||| Lifted version of `updateAndGet1`.
+export %inline
+updateAndGet : Lift1 World f => SignalRef a -> (g : a -> a) -> f a
+updateAndGet r = lift1 . updateAndGet1 r
 
 ||| Awaits the next value and its count, potentially blocking the
 ||| current fiber if the internal counter is at `current`.
