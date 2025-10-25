@@ -593,10 +593,51 @@ export %inline
 zipWithCount : Pull f o es r -> Pull f (o,Nat) es r
 zipWithCount = zipWithScan 1 (\n,_ => S n)
 
+||| Accumulates the input value using the given function.
+|||
+||| The emitted result will include the input up to but
+||| not including the current value.
+export %inline
+scans : p -> (p -> o -> p) -> Pull f o es r -> Pull f p es r
+scans vp fun = scan vp $ \vp1,vo => let vp2 := fun vp1 vo in (vp1,vp2)
+
+||| Like `scans` but the running total is including the current element.
+export %inline
+scans1 : p -> (p -> o -> p) -> Pull f o es r -> Pull f p es r
+scans1 vp fun = scan vp $ \vp1,vo => let vp2 := fun vp1 vo in (vp2,vp2)
+
 ||| Emits the count of each element.
 export %inline
 runningCount : Pull f o es r -> Pull f Nat es r
 runningCount = scan 1 (\n,_ => (n, S n))
+
+||| Like `scan` but with an effectful computation.
+export
+evalScan : s -> (s -> o -> f es (p,s)) -> Pull f o es r -> Pull f p es r
+evalScan s1 f p =
+  assert_total $ uncons p >>= \case
+    Left res    => pure res
+    Right (v,q) => do
+      (w,s2) <- exec $ f s1 v
+      cons w (evalScan s2 f q)
+
+parameters {0 es      : List Type}
+           {0 f       : List Type -> Type -> Type}
+           {auto func : Functor (f es)}
+  ||| Accumulates the input value using the given function.
+  |||
+  ||| The emitted result will include the input up to but
+  ||| not including the current value.
+  export %inline
+  evalScans : p -> (p -> o -> f es p) -> Pull f o es r -> Pull f p es r
+  evalScans vp fun =
+    evalScan vp $ \vp1,vo => (\vp2 => (vp1,vp2)) <$> fun vp1 vo
+
+  ||| Like `scans` but the running total is including the current element.
+  export %inline
+  evalScans1 : p -> (p -> o -> f es p) -> Pull f o es r -> Pull f p es r
+  evalScans1 vp fun =
+    evalScan vp $ \vp1,vo => (\vp2 => (vp2,vp2)) <$> fun vp1 vo
 
 --------------------------------------------------------------------------------
 -- Observing and Draining Streams
