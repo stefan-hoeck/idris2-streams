@@ -9,6 +9,7 @@ module FS.Concurrent
 
 import Data.Linear.Deferred
 import Data.Linear.Ref1
+import Data.List
 import Data.Maybe
 import Data.Nat
 
@@ -268,6 +269,15 @@ parJoin maxOpen out = do
   finally
     (putDeferred done (Right ()) >> wait fbr)
     (interruptOn done (receive output))
+
+export
+broadcast :
+     AsyncStream e es o
+  -> (pipes : List (o -> AsyncStream e es p))
+  -> {auto 0 prf : NonEmpty pipes}
+  -> AsyncStream e es p
+broadcast s ps@(_::qs) =
+  parJoin (S $ length ps) (flatMap s $ \v => emits $ map ($ v) ps)
 
 ||| Uses `parJoin` to map the given function over each emitted output
 ||| in parallel.

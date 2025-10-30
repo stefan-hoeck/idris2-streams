@@ -5,7 +5,6 @@ import Data.Linear.Traverse1
 import Data.List
 import Data.SnocList
 import FS.Pull
-import FS.Stream
 import Test.FS.Util
 
 -- --------------------------------------------------------------------------------
