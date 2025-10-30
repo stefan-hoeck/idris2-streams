@@ -48,6 +48,11 @@ export %inline
 delayed : TimerH e => Clock Duration -> o -> AsyncStream e es o
 delayed dur v = sleep dur <+> emit v
 
+||| Infinitely emits the given value at regular intervals.
+export %inline
+timed : TimerH e => Clock Duration -> o -> AsyncStream e es o
+timed dur v = assert_total $ delayed dur v >> timed dur v
+
 --------------------------------------------------------------------------------
 -- Streams from Concurrency Primitives
 --------------------------------------------------------------------------------

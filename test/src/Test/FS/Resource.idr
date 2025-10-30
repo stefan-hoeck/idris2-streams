@@ -1,5 +1,6 @@
 module Test.FS.Resource
 
+import Data.List
 import public Test.FS.Runner
 
 %default total
@@ -20,6 +21,11 @@ parameters {auto sr : Sink (Action Nat)}
     n <- acquire (Runner.alloc x) cleanup
     C.iterate (List Nat) Z S |> C.take n.val |> sinkAll
 
+  timedStream : TimerH e => Nat -> AsyncStream e [] Void
+  timedStream x = do
+    n <- acquire (Runner.alloc x) cleanup
+    timeout 850.ms (timed 100.ms n.val) |> toSink
+
 takeRes : Nat -> List (Event Nat Nat)
 takeRes 0       = [Alloc 0, Release 0]
 takeRes n@(S k) = [Alloc n] ++ map Out [0..k] ++ [Release n]
@@ -28,8 +34,11 @@ natRes : Nat -> List (Event Nat Nat)
 natRes 0       = [Alloc 0, Release 0]
 natRes n@(S k) = [Alloc n] ++ map (const $ Out 5) [0..k] ++ [Release n]
 
+timedRes : Nat -> List (Event Nat Nat)
+timedRes n = [Alloc n] ++ replicate 8 (Out n) ++ [Release n]
+
 covering
-instrs : List (FlatSpecInstr e)
+instrs : TimerH e => List (FlatSpecInstr e)
 instrs =
   [ "a stream's resource" `should` "be released after the stream is exhausted" `at`
       assert (testNN $ natStream 10000) (succeed' $ natRes 10000)
@@ -44,8 +53,10 @@ instrs =
   , it `should` "be timely released when the stream is created within flatMap in a new scope" `at`
       assert (testNN $ emits [1..1000] |> bind (newScope . takeStream))
         (succeed' $ [1..1000] >>= takeRes)
+  , it `should` "be released after external cancellation" `at`
+      assert (testNN $ timedStream 12) (succeed' $ timedRes 12)
   ]
 
 export covering
-specs : TestTree e
+specs : TimerH e => TestTree e
 specs = flatSpec "Resource Spec" instrs

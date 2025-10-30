@@ -8,8 +8,8 @@ import Test.FS.Resource
 
 main : IO ()
 main = do
-  snc <- sync
-  runAsync snc $ runTree $
+  sy <- sync
+  runAsync sy $ runTree $
     Node "Pull Spec"
       [ Resource.specs
       ]
