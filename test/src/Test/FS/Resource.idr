@@ -1,99 +1,51 @@
 module Test.FS.Resource
 
-import Data.Linear.Ref1
-import Data.Linear.Traverse1
-import Derive.Prelude
-import FS
-import Test.Async.Spec
+import public Test.FS.Runner
 
-%language ElabReflection
 %default total
 
-public export
-data Action : Type -> Type where
-  A : (res : a) -> Action a
-  R : (res : a) -> Action a
-
-%runElab derive "Action" [Show,Eq]
-
-export
-record Handled a where
-  constructor H
-  value : a
-
-%runElab derive "Handled" [Show,Eq]
-
-export %inline
-(.val) : Handled a -> a
-(.val) = value
-
-export
-record Sink o where
-  [noHints]
-  constructor S
-  sink : o -> IO1 ()
-
-export %inline
-(h : Sink (Action a)) => Resource (Async e) (Handled a) where
-  cleanup v = lift1 $ h.sink (R v.val)
-
-export %inline
-alloc : (h : Sink (Action a)) => a -> Async e es (Handled a)
-alloc v = lift1 (h.sink (A v)) $> H v
-
-public export
-data Event : (r,o : Type) -> Type where
-  Out     : (val : o) -> Event r o
-  Alloc   : (res : r) -> Event r o
-  Release : (res : r) -> Event r o
-
-%runElab derive "Event" [Show,Eq]
-
-
-public export
-record Collector r o where
-  [noHints]
-  constructor C
-  ref : IORef $ SnocList (Event r o)
-
-export
-events : HasIO io => Collector r o -> io (List $ Event r o)
-events c = (<>> []) <$> runIO (read1 c.ref)
-
-export
-allocSink : (c : Collector r o) => Sink (Action r)
-allocSink =
-  S $ \case
-    A v => casmod1 c.ref (:< Alloc v)
-    R v => casmod1 c.ref (:< Release v)
-
-export
-outputSink : (c : Collector r o) => Sink o
-outputSink = S $ \v => casmod1 c.ref (:< Out v)
-
-export %inline
-writeOutput : Lift1 World f => (h : Sink o) => List o -> f ()
-writeOutput = lift1 . traverse1_ h.sink
-
---------------------------------------------------------------------------------
--- Spec
---------------------------------------------------------------------------------
+five : Nat
+five = 5
 
 parameters {auto sr : Sink (Action Nat)}
            {auto so : Sink Nat}
 
   natStream : Nat -> AsyncStream e [] Void
   natStream x = do
-    n <- acquire (alloc x) cleanup
-    C.iterate (List Nat) n.val S |> foreach writeOutput
+    n <- acquire (Runner.alloc x) cleanup
+    P.replicate n.val five |> toSink
+
+  takeStream : Nat -> AsyncStream e [] Void
+  takeStream x = do
+    n <- acquire (Runner.alloc x) cleanup
+    C.iterate (List Nat) Z S |> C.take n.val |> sinkAll
+
+takeRes : Nat -> List (Event Nat Nat)
+takeRes 0       = [Alloc 0, Release 0]
+takeRes n@(S k) = [Alloc n] ++ map Out [0..k] ++ [Release n]
+
+natRes : Nat -> List (Event Nat Nat)
+natRes 0       = [Alloc 0, Release 0]
+natRes n@(S k) = [Alloc n] ++ map (const $ Out 5) [0..k] ++ [Release n]
+
+covering
+instrs : List (FlatSpecInstr e)
+instrs =
+  [ "a stream's resource" `should` "be released after the stream is exhausted" `at`
+      assert (testNN $ natStream 10000) (succeed' $ natRes 10000)
+  , it `should` "be released after taking a predefined prefix of the stream" `at`
+      assert (testNN $ takeStream 10000) (succeed' $ takeRes 10000)
+  , it `should` "be released after processing an appended stream in the same scope" `at`
+      assert (testNN $ takeStream 3 <+> natStream 2)
+        (succeed' [Alloc 3, Out 0, Out 1, Out 2, Alloc 2, Out 5, Out 5, Release 2, Release 3])
+  , it `should` "be released before processing an appended stream when wrapped in a new scope" `at`
+      assert (testNN $ newScope (takeStream 10000) <+> natStream 20000)
+        (succeed' $ takeRes 10000 ++ natRes 20000)
+  , it `should` "be timely released when the stream is created within flatMap in a new scope" `at`
+      assert (testNN $ emits [1..1000] |> bind (newScope . takeStream))
+        (succeed' $ [1..1000] >>= takeRes)
+  ]
 
 export covering
-testStream :
-     (0 r,o : Type)
-  -> (Collector r o => AsyncStream e es Void)
-  -> Async e [] (Outcome es (List $ Event r o))
-testStream r o s = do
-  ref <- newref [<]
-  out <- pull (s @{C ref})
-  se  <- readref ref
-  pure (out $> (se <>> []))
+specs : TestTree e
+specs = flatSpec "Resource Spec" instrs
