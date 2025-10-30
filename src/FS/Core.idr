@@ -570,34 +570,3 @@ parameters {auto mcn : MCancel f}
       Succeeded res => pure res
       Canceled      => pure neutral
       Error x impossible
-
--- logP : Pull f o es x -> String
--- logP (Val val) = "Val"
--- logP (Err err) = "Err"
--- logP (Cons val y) = "Cons"
--- logP (Act act) = "Act"
--- logP (Uncons y) = "Uncons"
--- logP (Att y) = "Att"
--- logP (Bind p g) = "Bind"
--- logP (OScope _ y) = "OScope"
--- logP GScope = "GScope"
--- logP (IScope _ y z) = "IScope"
--- logP (OnIntr _ _) = "OnIntr"
---
--- logI  : Item f o p es fs x y -> String
--- logI (B g) = "B"
--- logI A = "A"
--- logI U = "U"
--- logI (S z cl) = "S"
--- logI (I _) = "I"
---
--- logIS : Stack f o es fs x y -> String
--- logIS [] = ""
--- logIS (h::tl) = ", \{logI h}\{logIS tl}"
---
--- logST : Stack f o es fs x y -> String
--- logST [] = "[]"
--- logST (i::is) = "[\{logI i}\{logIS is}]"
---
--- log : Pull f o es x -> Stack f o es fs x y -> String
--- log p st = "\{logP p}: \{logST st}"
