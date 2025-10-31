@@ -43,15 +43,30 @@ export %inline
 sleep : TimerH e => Clock Duration -> AsyncStream e es o
 sleep = exec . sleep
 
+||| An empty stream that terminates at the given clock time.
+export %inline
+waitTill : TimerH e => Clock Monotonic -> AsyncStream e es o
+waitTill = exec . waitTill
+
 ||| Emits the given value after a delay of the given duration.
 export %inline
 delayed : TimerH e => Clock Duration -> o -> AsyncStream e es o
-delayed dur v = sleep dur <+> emit v
+delayed dur v = sleep dur >> emit v
+
+||| Emits the given value after at the given clock time
+export %inline
+atClock : TimerH e => Clock Monotonic -> o -> AsyncStream e es o
+atClock dur v = waitTill dur >> emit v
 
 ||| Infinitely emits the given value at regular intervals.
 export %inline
 timed : TimerH e => Clock Duration -> o -> AsyncStream e es o
-timed dur v = assert_total $ delayed dur v >> timed dur v
+timed dur v = do
+  now <- liftIO (clockTime Monotonic)
+  go (addDuration now dur)
+  where
+    go : Clock Monotonic -> AsyncStream e es o
+    go cl = assert_total $ atClock cl v >> go (addDuration cl dur)
 
 --------------------------------------------------------------------------------
 -- Streams from Concurrency Primitives
@@ -82,7 +97,7 @@ timeout :
 timeout dur str = do
   def <- deferredOf ()
   _   <- acquire (start {es = []} $ sleep dur >> putDeferred def ()) cancel
-  interruptOn def str
+  interruptOnAny def str
 
 --------------------------------------------------------------------------------
 -- Merging Streams

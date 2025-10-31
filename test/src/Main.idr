@@ -2,6 +2,7 @@ module Main
 
 import IO.Async.Loop.Sync
 import Test.FS.Bytes
+import Test.FS.Concurrent
 import Test.FS.Internal
 import Test.FS.Pull
 import Test.FS.Resource
@@ -11,7 +12,8 @@ main = do
   sy <- sync
   runAsync sy $ runTree $
     Node "Pull Spec"
-      [ Resource.specs
+      [ Concurrent.specs
+      , Resource.specs
       ]
   test
     [ Internal.props

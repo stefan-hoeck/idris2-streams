@@ -24,8 +24,6 @@ putErr def _         = pure ()
 ||| This is a low-level utility used to implement the combinators in this
 ||| module. It is exported, because it might be useful when
 ||| implementing other combinators,
--- TODO: We should add support for a deferred result plus error
---       handling here.
 export covering
 parrunCase :
      (sc      : Scope (Async e))
@@ -34,7 +32,7 @@ parrunCase :
   -> EmptyStream (Async e) fs
   -> Async e es (Fiber [] ())
 parrunCase sc check finally p =
-  start $ ignore $ guaranteeCase (pullIn sc $ interruptOn check p) $ \case
+  start $ ignore $ guaranteeCase (pullIn sc $ interruptOnAny check p) $ \case
     Succeeded res => finally res
     Canceled      => finally Canceled
     Error err impossible
@@ -45,8 +43,6 @@ parrunCase sc check finally p =
 ||| This is a low-level utility used to implement the combinators in this
 ||| module. It is exported, because it might be useful when
 ||| implementing other combinators,
--- TODO: We should add support for a deferred result plus error
---       handling here.
 export covering %inline
 parrun :
      (sc      : Scope (Async e))

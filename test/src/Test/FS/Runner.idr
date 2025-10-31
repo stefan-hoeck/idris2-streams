@@ -62,7 +62,8 @@ succeed : r -> List (Event e o) -> Runres es e o r
 succeed res = RR (Succeeded res)
 
 export %inline
-failed : r -> List (Event e o) -> Runres es e o r
+failed : Has x es => x -> List (Event e o) -> Runres es e o r
+failed err = RR (Error $ inject err)
 
 export %inline
 succeed' : List (Event e o) -> Runres es e o ()

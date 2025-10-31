@@ -24,7 +24,7 @@ parameters {auto sr : Sink (Action Nat)}
   timedStream : TimerH e => Nat -> AsyncStream e [] Void
   timedStream x = do
     n <- acquire (Runner.alloc x) cleanup
-    timeout 850.ms (timed 100.ms n.val) |> toSink
+    timed 50.ms n.val |> timeout 410.ms |> toSink
 
 takeRes : Nat -> List (Event Nat Nat)
 takeRes 0       = [Alloc 0, Release 0]

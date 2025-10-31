@@ -209,16 +209,30 @@ export %inline
 att : Pull f o es r -> Pull f o fs (Result es r)
 att = Att
 
+peek : Deferred World (Result es ()) -> Stream (Async e) es o
+peek x =
+  Bind (Act $ Eval $ lift1 $ peekDeferred1 x) $ \case
+    Nothing => Val ()
+    Just (Left err) => Err err
+    Just (Right _)  => Val ()
+
 ||| Runs the given pull in a new child scope and interrupts
 ||| its evaluation once the given `Deferred` is completed.
--- TODO: We should add support for a deferred result plus error
---       handling here.
 export
 interruptOn :
+     Deferred World (Result es ())
+  -> Stream (Async e) es o
+  -> Stream (Async e) es o
+interruptOn def p = OnIntr (OScope (I def) p) (peek def)
+
+||| Runs the given pull in a new child scope and interrupts
+||| its evaluation once the given `Deferred` is completed.
+export
+interruptOnAny :
      Deferred World a
   -> Stream (Async e) es o
   -> Stream (Async e) es o
-interruptOn def p = OnIntr (OScope (I def) p) (Val ())
+interruptOnAny def p = OnIntr (OScope (I def) p) (Val ())
 
 --------------------------------------------------------------------------------
 -- Interfaces
