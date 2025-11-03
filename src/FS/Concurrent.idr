@@ -118,7 +118,6 @@ parameters (chnl : Channel o)
   out (Error err) = putDeferred res (Left err)
   out _           = do
     0 <- update sema (\x => let y := pred x in (y,y)) | _ => pure ()
-    putStrLn "Channel closed"
     close chnl
 
   -- Starts running one of the input streams `s` in the background, returning
@@ -242,7 +241,7 @@ parameters (done      : Deferred World (Result es ()))
 |||
 ||| The outer stream is evaluated and each resulting inner stream is run concurrently,
 ||| up to `maxOpen` stream. Once this limit is reached, evaluation of the outer stream
-||| is paused until one or more inner streams finish evaluating.
+||| is paused until one of the inner streams finishes evaluating.
 |||
 ||| When the outer stream stops gracefully, all inner streams continue to run,
 ||| resulting in a stream that will stop when all inner streams finish

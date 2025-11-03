@@ -110,3 +110,46 @@ toSink = foreach (lift1 . s.sink)
 export %inline
 sinkAll : LIO (f es) => (s : Sink o) => Pull f (List o) es r -> Pull f Void es r
 sinkAll = foreach (lift1 . traverse1_ s.sink)
+
+parameters {0 es    : List Type}
+           {0 o,r,a : Type}
+           {auto sa : Show a}
+           {auto ea : Eq a}
+           (0 ev    : Type)
+           (p       : Sink (Action ev) => AsyncPull e o es r)
+
+  export covering
+  assertPull : (Runres es ev o r -> a) -> (exp : a) -> Test e
+  assertPull get = assert (get <$> testStream ev o (toSink p))
+
+--   export covering
+--   assertOut :
+--        (Sink (Action ev) => AsyncPull e o es r)
+--     -> (out : Outcome es r)
+--     -> Test e
+--   assertOut p = assert (result <$> testStream ev o (toSink p))
+--
+--   export covering %inline
+--   assertSucc :
+--        (Sink (Action ev) => AsyncPull e o es r)
+--     -> (exp : r)
+--     -> Test e
+--   assertSucc p = assertOut p . Succeeded
+--
+--   export covering %inline
+--   assertFail :
+--        {auto has : Has x es}
+--     -> (Sink (Action ev) => AsyncPull e o es r)
+--     -> (err : x)
+--     -> Test e
+--   assertFail p = assertOut p . Error . inject
+--
+--   export covering %inline
+--   assertEvs :
+--        {auto sa : Show a}
+--     -> {auto ea : Eq a}
+--     -> (Sink (Action ev) => AsyncPull e o es r)
+--     -> (adj : List (Event ev o) -> a)
+--     -> (exp : a)
+--     -> Test e
+--   assertEvs p adj = assert ((adj . events) <$> testStream ev o (toSink p))
