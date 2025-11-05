@@ -5,111 +5,117 @@ import Test.FS.Runner
 %default total
 
 parameters {auto sr : Sink (Action Nat)}
-           {auto so : Sink Nat}
            {auto ti : TimerH e}
 
-  timedNats : Nat -> Clock Duration -> AsyncStream e es Nat
-  timedNats x cl = bracket (Runner.alloc x) cleanup $ \n => timed cl n.val
+  timedN : Nat -> Clock Duration -> AsyncStream e es Nat
+  timedN x cl = bracket (Runner.alloc x) cleanup $ \n => timed cl n.val
 
-  errNats : Nat -> Clock Duration -> AsyncStream e [String] Nat
-  errNats x cl =
+  errN : Nat -> Clock Duration -> AsyncStream e [String] Nat
+  errN x cl =
     bracket (Runner.alloc x) cleanup $ \n =>
-      take 4 (timed cl n.val) >> throw "Oops" >> timed cl n.val
+      P.take 5 (timed cl n.val) >> throw "Oops" >> timed cl n.val
 
-  mergeSuccess : AsyncStream e [] Void
-  mergeSuccess =
-       merge [timedNats 1 10.ms, timedNats 2 21.ms, timedNats 3 33.ms]
-    |> P.take 10
-    |> toSink
+  mergeSucc : AsyncStream e [] Nat
+  mergeSucc = merge [timedN 1 10.ms, timedN 2 20.ms, timedN 3 30.ms]
 
-  mergeErr : AsyncStream e [String] Void
-  mergeErr =
-       merge [errNats 1 10.ms, timedNats 2 21.ms, timedNats 3 33.ms]
-    |> P.take 10
-    |> toSink
+  mergeErr : AsyncStream e [String] Nat
+  mergeErr = merge [errN 1 10.ms, timedN 2 21.ms, timedN 3 33.ms]
 
-  mergeHL : AsyncStream e [] Void
-  mergeHL =
-       mergeHaltL (P.take 3 $ timedNats 1 10.ms) (timedNats 2 21.ms)
-    |> toSink
+  mergeHL : AsyncStream e [] Nat
+  mergeHL = mergeHaltL (P.take 3 $ timedN 1 10.ms) (timedN 2 20.ms)
 
-  mergeHLErr : AsyncStream e [String] Void
-  mergeHLErr =
-       mergeHaltL (errNats 1 10.ms) (timedNats 2 21.ms)
-    |> toSink
+  mergeHLErr : AsyncStream e [String] Nat
+  mergeHLErr = mergeHaltL (errN 1 10.ms) (timedN 2 20.ms)
 
-  mergeHLErr2 : AsyncStream e [String] Void
-  mergeHLErr2 =
-       mergeHaltL (timedNats 2 21.ms) (errNats 1 10.ms)
-    |> toSink
+  mergeHLErr2 : AsyncStream e [String] Nat
+  mergeHLErr2 = mergeHaltL (timedN 2 20.ms) (errN 1 10.ms)
 
-  mergeBoth : AsyncStream e [] Void
-  mergeBoth =
-       mergeHaltBoth (P.take 3 $ timedNats 1 10.ms) (timedNats 2 21.ms)
-    |> toSink
+  mergeBoth : AsyncStream e [] Nat
+  mergeBoth = mergeHaltBoth (P.take 3 $ timedN 1 10.ms) (timedN 2 21.ms)
 
-  mergeBoth2 : AsyncStream e [] Void
-  mergeBoth2 =
-       mergeHaltBoth (timedNats 2 21.ms) (P.take 3 $ timedNats 1 10.ms)
-    |> toSink
+  mergeBoth2 : AsyncStream e [] Nat
+  mergeBoth2 = mergeHaltBoth (timedN 2 21.ms) (P.take 3 $ timedN 1 10.ms)
 
-  mergeBothErr : AsyncStream e [String] Void
-  mergeBothErr =
-       mergeHaltBoth (errNats 1 10.ms) (timedNats 2 21.ms)
-    |> toSink
+  mergeBothErr : AsyncStream e [String] Nat
+  mergeBothErr = mergeHaltBoth (errN 1 10.ms) (timedN 2 21.ms)
 
-  mergeBothErr2 : AsyncStream e [String] Void
-  mergeBothErr2 =
-       mergeHaltBoth (timedNats 2 21.ms) (errNats 1 10.ms)
-    |> toSink
-
-succRes : List (Event Nat Nat)
-succRes =
-     map Alloc [1,2,3]
-  ++ [Out 1, Out 1, Out 2, Out 1, Out 3, Out 1, Out 2, Out 1, Out 1, Out 2]
-  ++ map Release [3,2,1]
-
-hlRes : List (Event Nat Nat)
-hlRes = map Alloc [1,2] ++ [Out 1, Out 1, Out 2, Out 1] ++ map Release [1,2]
-
-hlRes2 : List (Event Nat Nat)
-hlRes2 = map Alloc [2,1] ++ [Out 1, Out 1, Out 2, Out 1] ++ map Release [1,2]
-
-hlErrRes : List (Event Nat Nat)
-hlErrRes =
-  map Alloc [1,2] ++ [Out 1, Out 1, Out 2, Out 1, Out 1] ++ map Release [1,2]
-
-hlErrRes2 : List (Event Nat Nat)
-hlErrRes2 =
-  map Alloc [2,1] ++ [Out 1, Out 1, Out 2, Out 1, Out 1] ++ map Release [1,2]
-
-errRes : List (Event Nat Nat)
-errRes =
-     map Alloc [1,2,3]
-  ++ [Out 1, Out 1, Out 2, Out 1, Out 3, Out 1]
-  ++ map Release [1,2,3]
+  mergeBothErr2 : AsyncStream e [String] Nat
+  mergeBothErr2 = mergeHaltBoth (timedN 2 21.ms) (errN 1 10.ms)
 
 covering
 instrs : TimerH e => List (FlatSpecInstr e)
 instrs =
-  [ "a merged stream" `should` "run to completion if all child streams succeed" `at`
-      assert (testNN mergeSuccess) (succeed' succRes)
-  , it `should` "fail with an error after the first child failed" `at`
-      assert (testNN mergeErr) (failed "Oops" errRes)
-  , "a stream merged vith mergeHaltL" `should` "stop when the first stream is exhausted" `at`
-      assert (testNN mergeHL) (succeed' hlRes)
-  , it `should` "stop, if the first stream fails with an error" `at`
-      assert (testNN mergeHLErr) (failed "Oops" hlErrRes)
-  , it `should` "stop, if the second stream fails with an error" `at`
-      assert (testNN mergeHLErr2) (failed "Oops" hlErrRes2)
-  , "a stream merged vith mergeHaltBoth" `should` "stop when the first stream is exhausted" `at`
-      assert (testNN mergeBoth) (succeed' hlRes)
-  , it `should` "stop when the second stream is exhaused" `at`
-      assert (testNN mergeBoth2) (succeed' hlRes2)
-  , it `should` "stop, if the first stream fails with an error" `at`
-      assert (testNN mergeBothErr) (failed "Oops" hlErrRes)
-  , it `should` "stop, if the second stream fails with an error" `at`
-      assert (testNN mergeBothErr2) (failed "Oops" hlErrRes2)
+  [ "a merged stream" `should` "run to completion if all child streams succeed" !:
+      assertSorted Nat (P.take 11 mergeSucc) [1,1,1,1,1,1,2,2,2,3,3]
+
+  , it `should` "acquire all necessary resources" !:
+      assertSortedAcquired Nat (P.take 11 mergeSucc) [1,2,3]
+
+  , it `should` "release all acquired resources" !:
+      assertSortedReleased Nat (P.take 11 mergeSucc) [1,2,3]
+
+  , it `should` "fail with an error after the first child failed" !:
+      assertErr Nat mergeErr "Oops"
+
+  , it `should` "release all acquired resources after the first child failed" !:
+      assertSortedReleased Nat mergeErr [1,2,3]
+
+  , "a stream merged vith mergeHaltL" `should` "stop when the the first stream is exhausted" !:
+      assertSorted Nat mergeHL [1,1,1,2]
+
+  , it `should` "stop, if the first stream fails with an error" !:
+      assertSorted Nat mergeHLErr [1,1,1,1,1,2,2]
+
+  , it `should` "stop, if the second stream fails with an error" !:
+      assertSorted Nat mergeHLErr2 [1,1,1,1,1,2,2]
+
+  , it `should` "fail with an error after the first stream failed with an error" !:
+      assertErr Nat mergeHLErr "Oops"
+
+  , it `should` "fail with an error after the second stream failed with an error" !:
+      assertErr Nat mergeHLErr2 "Oops"
+
+  , it `should` "acquire all necessary resources" !:
+      assertSortedAcquired Nat mergeHL [1,2]
+
+  , it `should` "release all acquired resources" !:
+      assertSortedReleased Nat mergeHL [1,2]
+
+  , it `should` "release all acquired resources even if the first stream failed" !:
+      assertSortedReleased Nat mergeHLErr [1,2]
+
+  , it `should` "release all acquired resources even if the second stream failed" !:
+      assertSortedReleased Nat mergeHLErr2 [1,2]
+
+  , "a stream merged vith mergeHaltBoth" `should` "stop when the the first stream is exhausted" !:
+      assertSorted Nat mergeBoth [1,1,1,2]
+
+  , it `should` "stop when the the second stream is exhausted" !:
+      assertSorted Nat mergeBoth2 [1,1,1,2]
+
+  , it `should` "stop, if the first stream fails with an error" !:
+      assertSorted Nat mergeBothErr [1,1,1,1,1,2,2]
+
+  , it `should` "stop, if the second stream fails with an error" !:
+      assertSorted Nat mergeBothErr2 [1,1,1,1,1,2,2]
+
+  , it `should` "fail with an error after the first stream failed with an error" !:
+      assertErr Nat mergeBothErr "Oops"
+
+  , it `should` "fail with an error after the second stream failed with an error" !:
+      assertErr Nat mergeBothErr2 "Oops"
+
+  , it `should` "acquire all necessary resources" !:
+      assertSortedAcquired Nat mergeBoth [1,2]
+
+  , it `should` "release all acquired resources" !:
+      assertSortedReleased Nat mergeBoth [1,2]
+
+  , it `should` "release all acquired resources even if the first stream failed" !:
+      assertSortedReleased Nat mergeBothErr [1,2]
+
+  , it `should` "release all acquired resources even if the second stream failed" !:
+      assertSortedReleased Nat mergeBothErr2 [1,2]
   ]
 
 export covering

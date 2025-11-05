@@ -10,51 +10,60 @@ five = 5
 
 parameters {auto sr : Sink (Action Nat)}
 
-  numbers : Nat -> AsyncStream e [] Nat
-  numbers x = do
+  acq : Nat -> AsyncStream e [] Nat
+  acq x = do
     n <- acquire (Runner.alloc x) cleanup
     P.replicate n.val five
 
---   takeStream : Nat -> AsyncStream e [] Void
---   takeStream x = do
---     n <- acquire (Runner.alloc x) cleanup
---     C.iterate (List Nat) Z S |> C.take n.val |> sinkAll
---
---   timedStream : TimerH e => Nat -> AsyncStream e [] Void
---   timedStream x = do
---     n <- acquire (Runner.alloc x) cleanup
---     timed 50.ms n.val |> timeout 410.ms |> toSink
+  acqErr : AsyncStream e [String] Nat
+  acqErr = do
+    n <- acquire (Runner.alloc Z) cleanup
+    P.replicate 1 five
+    P.replicate 1 five
+    throw "Oops"
+    P.replicate 3 five
 
-takeRes : Nat -> List (Event Nat Nat)
-takeRes 0       = [Alloc 0, Release 0]
-takeRes n@(S k) = [Alloc n] ++ map Out [0..k] ++ [Release n]
-
-natRes : Nat -> List (Event Nat Nat)
-natRes 0       = [Alloc 0, Release 0]
-natRes n@(S k) = [Alloc n] ++ map (const $ Out 5) [0..k] ++ [Release n]
-
-timedRes : Nat -> List (Event Nat Nat)
-timedRes n = [Alloc n] ++ replicate 8 (Out n) ++ [Release n]
+  acqScoped : AsyncStream e [String] Nat
+  acqScoped =
+    newScope (weakenErrors $ acq 1) >> P.replicate 2 five
 
 covering
 instrs : TimerH e => List (FlatSpecInstr e)
 instrs =
-  [ "a stream's resource" `should` "be acquired before the stream is run" `at`
-      10 === 10
---      assertPull Nat (numbers 200) firstEv (succeed' $ natRes 10000)
---   , it `should` "be released after taking a predefined prefix of the stream" `at`
---       assert (testNN $ takeStream 10000) (succeed' $ takeRes 10000)
---   , it `should` "be released after processing an appended stream in the same scope" `at`
---       assert (testNN $ takeStream 3 <+> natStream 2)
---         (succeed' [Alloc 3, Out 0, Out 1, Out 2, Alloc 2, Out 5, Out 5, Release 2, Release 3])
---   , it `should` "be released before processing an appended stream when wrapped in a new scope" `at`
---       assert (testNN $ newScope (takeStream 10000) <+> natStream 20000)
---         (succeed' $ takeRes 10000 ++ natRes 20000)
---   , it `should` "be timely released when the stream is created within flatMap in a new scope" `at`
---       assert (testNN $ emits [1..1000] |> bind (newScope . takeStream))
---         (succeed' $ [1..1000] >>= takeRes)
---   , it `should` "be released after external cancellation" `at`
---       assert (testNN $ timedStream 12) (succeed' $ timedRes 12)
+  [ "a stream's resource" `should` "be acquired before the stream is run" !:
+      assertAcquired Nat (acq 200) [200]
+
+  , it `should` "be released after the stream is exhausted" !:
+      assertReleased Nat (acq 200) [200]
+
+  , it `should` "be released after the last value has been emitted" !:
+      assertEvents Nat (acq 2) [Alloc 2,Out 5,Out 5,Release 2]
+
+  , it `should` "be released after the stream fails with an error" !:
+      assertEvents Nat acqErr [Alloc 0,Out 5,Out 5,Release 0]
+
+  , it `should` "be released when its scope closes" !:
+      assertEvents Nat acqScoped [Alloc 1,Out 5,Release 1,Out 5,Out 5]
+
+  , it `should` "not be acquired if the stream is exhausted early" !:
+      assertAcquired Nat (P.take 2 $ acq 10 >> acq 20) [10]
+
+  , it `should` "be released if the stream is exhausted early" !:
+      assertReleased Nat (P.take 2 $ acq 10 >> acq 20) [10]
+
+  , it `should` "be released after emitting output if the stream is exhausted early" !:
+      assertEvents Nat (P.take 2 $ acq 10 >> acq 20)
+        [Alloc 10, Out 5, Out 5, Release 10]
+
+  , it `should` "be acquired and released in the correct order when concatenating streams" !:
+      assertEvents Nat (P.take 3 $ acq 2 >> acq 20)
+        [Alloc 2, Out 5, Out 5, Alloc 20, Out 5, Release 20, Release 2]
+
+  , "a stream's resources" `should` "be acquired in the correct order" !:
+      assertAcquired Nat (acq 10 >> acq 20) [10,20]
+
+  , they `should` "be released in reverse order of acquisition" !:
+      assertReleased Nat (acq 10 >> acq 20) [20,10]
   ]
 
 export covering

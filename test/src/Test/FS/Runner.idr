@@ -2,6 +2,7 @@ module Test.FS.Runner
 
 import Data.Linear.Ref1
 import Data.Linear.Traverse1
+import Data.SortedSet as SS
 import Derive.Prelude
 import public Data.Linear.Sink
 import public FS
@@ -45,6 +46,21 @@ data Event : (r,o : Type) -> Type where
   Release : (res : r) -> Event r o
 
 %runElab derive "Event" [Show,Eq]
+
+export %inline
+unalloc : Event r o -> Maybe r
+unalloc (Alloc ev) = Just ev
+unalloc _          = Nothing
+
+export %inline
+unrelease : Event r o -> Maybe r
+unrelease (Release ev) = Just ev
+unrelease _            = Nothing
+
+export %inline
+unout : Event r o -> Maybe o
+unout (Out v) = Just v
+unout _       = Nothing
 
 export
 Cast (Action r) (Event r o) where
@@ -111,45 +127,88 @@ export %inline
 sinkAll : LIO (f es) => (s : Sink o) => Pull f (List o) es r -> Pull f Void es r
 sinkAll = foreach (lift1 . traverse1_ s.sink)
 
-parameters {0 es    : List Type}
-           {0 o,r,a : Type}
-           {auto sa : Show a}
-           {auto ea : Eq a}
-           (0 ev    : Type)
-           (p       : Sink (Action ev) => AsyncPull e o es r)
+export
+acquired : Runres es ev o r -> List ev
+acquired = mapMaybe unalloc . events
+
+export
+released : Runres es ev o r -> List ev
+released = mapMaybe unrelease . events
+
+export
+output : Runres es ev o r -> List o
+output = mapMaybe unout . events
+
+export
+error : Runres es ev o r -> Maybe (HSum es)
+error x =
+  case x.result of
+    Error err => Just err
+    _         => Nothing
+
+export
+success : Runres es ev o r -> Maybe r
+success x =
+  case x.result of
+    Succeeded v => Just v
+    _           => Nothing
+
+export
+canceled : Runres es ev o r -> Bool
+canceled x =
+  case x.result of
+    Canceled => True
+    _        => False
+
+parameters {0 es  : List Type}
+           {0 o,r : Type}
+           (0 ev  : Type)
+           (p     : Sink (Action ev) => AsyncPull e o es r)
 
   export covering
-  assertPull : (Runres es ev o r -> a) -> (exp : a) -> Test e
+  assertPull : Show a => Eq a => (Runres es ev o r -> a) -> (exp : a) -> Test e
   assertPull get = assert (get <$> testStream ev o (toSink p))
 
---   export covering
---   assertOut :
---        (Sink (Action ev) => AsyncPull e o es r)
---     -> (out : Outcome es r)
---     -> Test e
---   assertOut p = assert (result <$> testStream ev o (toSink p))
---
---   export covering %inline
---   assertSucc :
---        (Sink (Action ev) => AsyncPull e o es r)
---     -> (exp : r)
---     -> Test e
---   assertSucc p = assertOut p . Succeeded
---
---   export covering %inline
---   assertFail :
---        {auto has : Has x es}
---     -> (Sink (Action ev) => AsyncPull e o es r)
---     -> (err : x)
---     -> Test e
---   assertFail p = assertOut p . Error . inject
---
---   export covering %inline
---   assertEvs :
---        {auto sa : Show a}
---     -> {auto ea : Eq a}
---     -> (Sink (Action ev) => AsyncPull e o es r)
---     -> (adj : List (Event ev o) -> a)
---     -> (exp : a)
---     -> Test e
---   assertEvs p adj = assert ((adj . events) <$> testStream ev o (toSink p))
+  export covering %inline
+  assertOut : Show o => Eq o => (exp : List o) -> Test e
+  assertOut = assertPull output
+
+  export covering %inline
+  assertSorted : Show o => Ord o => (exp : List o) -> Test e
+  assertSorted = assertPull (sort . output)
+
+  export covering %inline
+  assertSet : Show o => Ord o => (exp : SortedSet o) -> Test e
+  assertSet = assertPull (SS.fromList . output)
+
+  export covering %inline
+  assertAcquired : Show ev => Eq ev => (exp : List ev) -> Test e
+  assertAcquired = assertPull acquired
+
+  export covering %inline
+  assertSortedAcquired : Show ev => Ord ev => (exp : List ev) -> Test e
+  assertSortedAcquired = assertPull (sort . acquired)
+
+  export covering %inline
+  assertReleased : Show ev => Eq ev => (exp : List ev) -> Test e
+  assertReleased = assertPull released
+
+  export covering %inline
+  assertSortedReleased : Show ev => Ord ev => (exp : List ev) -> Test e
+  assertSortedReleased = assertPull (sort . released)
+
+  export covering %inline
+  assertEvents : Show o => Eq o => Show ev => Eq ev => List (Event ev o) -> Test e
+  assertEvents = assertPull events
+
+  export covering %inline
+  assertErr : Has x es => All Show es => All Eq es => x -> Test e
+  assertErr = assertPull error . Just . inject
+
+  export covering %inline
+  assertSuccess : Show r => Eq r => r -> Test e
+  assertSuccess = assertPull success . Just
+
+  export covering %inline
+  assertCanceled : Test e
+  assertCanceled = assertPull canceled True
