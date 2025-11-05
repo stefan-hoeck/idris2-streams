@@ -9,6 +9,7 @@ module FS.Concurrent
 
 import Data.Linear.Deferred
 import Data.Linear.Ref1
+import Data.List
 import Data.Maybe
 import Data.Nat
 
@@ -42,10 +43,30 @@ export %inline
 sleep : TimerH e => Clock Duration -> AsyncStream e es o
 sleep = exec . sleep
 
+||| An empty stream that terminates at the given clock time.
+export %inline
+waitTill : TimerH e => Clock Monotonic -> AsyncStream e es o
+waitTill = exec . waitTill
+
 ||| Emits the given value after a delay of the given duration.
 export %inline
 delayed : TimerH e => Clock Duration -> o -> AsyncStream e es o
-delayed dur v = sleep dur <+> emit v
+delayed dur v = sleep dur >> emit v
+
+||| Emits the given value after at the given clock time
+export %inline
+atClock : TimerH e => Clock Monotonic -> o -> AsyncStream e es o
+atClock dur v = waitTill dur >> emit v
+
+||| Infinitely emits the given value at regular intervals.
+export %inline
+timed : TimerH e => Clock Duration -> o -> AsyncStream e es o
+timed dur v = do
+  now <- liftIO (clockTime Monotonic)
+  go (addDuration now dur)
+  where
+    go : Clock Monotonic -> AsyncStream e es o
+    go cl = assert_total $ atClock cl v >> go (addDuration cl dur)
 
 --------------------------------------------------------------------------------
 -- Streams from Concurrency Primitives
@@ -76,7 +97,7 @@ timeout :
 timeout dur str = do
   def <- deferredOf ()
   _   <- acquire (start {es = []} $ sleep dur >> putDeferred def ()) cancel
-  interruptOn def str
+  interruptOnAny def str
 
 --------------------------------------------------------------------------------
 -- Merging Streams
@@ -97,7 +118,6 @@ parameters (chnl : Channel o)
   out (Error err) = putDeferred res (Left err)
   out _           = do
     0 <- update sema (\x => let y := pred x in (y,y)) | _ => pure ()
-    putStrLn "Channel closed"
     close chnl
 
   -- Starts running one of the input streams `s` in the background, returning
@@ -221,7 +241,7 @@ parameters (done      : Deferred World (Result es ()))
 |||
 ||| The outer stream is evaluated and each resulting inner stream is run concurrently,
 ||| up to `maxOpen` stream. Once this limit is reached, evaluation of the outer stream
-||| is paused until one or more inner streams finish evaluating.
+||| is paused until one of the inner streams finishes evaluating.
 |||
 ||| When the outer stream stops gracefully, all inner streams continue to run,
 ||| resulting in a stream that will stop when all inner streams finish
@@ -268,6 +288,15 @@ parJoin maxOpen out = do
   finally
     (putDeferred done (Right ()) >> wait fbr)
     (interruptOn done (receive output))
+
+export
+broadcast :
+     AsyncStream e es o
+  -> (pipes : List (o -> AsyncStream e es p))
+  -> {auto 0 prf : NonEmpty pipes}
+  -> AsyncStream e es p
+broadcast s ps@(_::qs) =
+  parJoin (S $ length ps) (flatMap s $ \v => emits $ map ($ v) ps)
 
 ||| Uses `parJoin` to map the given function over each emitted output
 ||| in parallel.

@@ -5,6 +5,8 @@ version    = 0.1.0
 depends = base >= 0.7.0
         , streams
         , hedgehog
+        , async-spec
+        , async-posix
 
 sourcedir = "src"
 

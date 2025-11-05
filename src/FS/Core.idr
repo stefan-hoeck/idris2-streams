@@ -209,16 +209,30 @@ export %inline
 att : Pull f o es r -> Pull f o fs (Result es r)
 att = Att
 
+peek : Deferred World (Result es ()) -> Stream (Async e) es o
+peek x =
+  Bind (Act $ Eval $ lift1 $ peekDeferred1 x) $ \case
+    Nothing => Val ()
+    Just (Left err) => Err err
+    Just (Right _)  => Val ()
+
 ||| Runs the given pull in a new child scope and interrupts
 ||| its evaluation once the given `Deferred` is completed.
--- TODO: We should add support for a deferred result plus error
---       handling here.
 export
 interruptOn :
+     Deferred World (Result es ())
+  -> Stream (Async e) es o
+  -> Stream (Async e) es o
+interruptOn def p = OnIntr (OScope (I def) p) (peek def)
+
+||| Runs the given pull in a new child scope and interrupts
+||| its evaluation once the given `Deferred` is completed.
+export
+interruptOnAny :
      Deferred World a
   -> Stream (Async e) es o
   -> Stream (Async e) es o
-interruptOn def p = OnIntr (OScope (I def) p) (Val ())
+interruptOnAny def p = OnIntr (OScope (I def) p) (Val ())
 
 --------------------------------------------------------------------------------
 -- Interfaces
@@ -570,34 +584,3 @@ parameters {auto mcn : MCancel f}
       Succeeded res => pure res
       Canceled      => pure neutral
       Error x impossible
-
--- logP : Pull f o es x -> String
--- logP (Val val) = "Val"
--- logP (Err err) = "Err"
--- logP (Cons val y) = "Cons"
--- logP (Act act) = "Act"
--- logP (Uncons y) = "Uncons"
--- logP (Att y) = "Att"
--- logP (Bind p g) = "Bind"
--- logP (OScope _ y) = "OScope"
--- logP GScope = "GScope"
--- logP (IScope _ y z) = "IScope"
--- logP (OnIntr _ _) = "OnIntr"
---
--- logI  : Item f o p es fs x y -> String
--- logI (B g) = "B"
--- logI A = "A"
--- logI U = "U"
--- logI (S z cl) = "S"
--- logI (I _) = "I"
---
--- logIS : Stack f o es fs x y -> String
--- logIS [] = ""
--- logIS (h::tl) = ", \{logI h}\{logIS tl}"
---
--- logST : Stack f o es fs x y -> String
--- logST [] = "[]"
--- logST (i::is) = "[\{logI i}\{logIS is}]"
---
--- log : Pull f o es x -> Stack f o es fs x y -> String
--- log p st = "\{logP p}: \{logST st}"
