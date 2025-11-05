@@ -31,7 +31,7 @@ parrunCase :
   -> (finally : Outcome fs () -> Async e [] ())
   -> EmptyStream (Async e) fs
   -> Async e es (Fiber [] ())
-parrunCase sc check finally p =
+parrunCase sc check finally p = do
   start $ ignore $ guaranteeCase (pullIn sc $ interruptOnAny check p) $ \case
     Succeeded res => finally res
     Canceled      => finally Canceled

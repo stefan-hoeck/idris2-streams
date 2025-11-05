@@ -22,6 +22,7 @@ data Action :
   -> Type where
   Eval    : (act : f es r) -> Action f es r
   Acquire : f es r -> (r -> f [] ()) -> Action f es r
+  Lease   : Scope f -> Action f es ()
   Close   : Scope f -> Result es r -> Action f es r
 
 --------------------------------------------------------------------------------
@@ -194,6 +195,11 @@ scope = GScope
 export %inline
 newScope : Pull f o es r -> Pull f o es r
 newScope = OScope None
+
+|||
+export %inline
+lease : Scope f -> Pull f o es ()
+lease = Act . Lease
 
 ||| Forces the given `Pull` to be evaluated in the given scope.
 |||
@@ -516,6 +522,11 @@ parameters {0 f      : List Type -> Type -> Type}
           Succeeded v => addHook ref sc2 (release v) >> loop sc2 (Val v) st2
           Error x     => loop sc2 (Err x) st2
           Canceled    => interrupted sc2 st2
+
+        Lease sc => Prelude.do
+          cl <- Scope.lease ref sc
+          addHook ref sc2 cl
+          loop sc2 (Val ()) st2
 
         -- Scope `old` has come to an end and should be closed, thus
         -- releasing all resources that have been aqcuired within.

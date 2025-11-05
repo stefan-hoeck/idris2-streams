@@ -5,14 +5,51 @@ import Control.Monad.Elin
 import Data.Linear.Deferred
 import Data.Linear.ELift1
 import Data.Linear.Ref1
+import Data.Linear.Traverse1
 import Data.Linear.Unique
 import Data.Maybe
+import Data.Nat
 import Data.SortedMap
 import Data.SortedSet
 
 import IO.Async
 
 %default total
+
+--------------------------------------------------------------------------------
+-- Hook
+--------------------------------------------------------------------------------
+
+record Hook (f : List Type -> Type -> Type) where
+  constructor H
+  cleanup : f [] ()
+  lease   : f [] (f [] ())
+
+updCleanup, updUnlease, updLease : (Bool,Nat) -> ((Bool,Nat),Bool)
+updCleanup (False,b) = ((True,b),b == 0)
+updCleanup p         = (p,False)
+
+updUnlease (b,1) = ((b,0),b)
+updUnlease (b,n) = ((b,pred n),False)
+
+updLease (b,n) = ((b,S n),True)
+
+hook : ELift1 s f => f [] () -> F1 s (Hook f)
+hook act t =
+ let state # t := ref1 (False,Z) t -- (cleaned up, leased)
+  in H (cl state) (ls state) # t
+
+  where
+    cl : Ref s (Bool,Nat) -> f [] ()
+    cl state = when !(update state updCleanup) act
+
+    unlease : Ref s (Bool,Nat) -> f [] ()
+    unlease state = when !(update state updUnlease) act
+
+    ls : Ref s (Bool,Nat) -> f [] (f [] ())
+    ls state = do
+      True <- update state updLease | False => pure (pure ())
+      pure (unlease state)
 
 --------------------------------------------------------------------------------
 -- Interrupt
@@ -104,7 +141,7 @@ record Node (f : List Type -> Type -> Type) where
   scope : Scope f
 
   ||| optional cleanup hook for a resource allocated in this scope
-  cleanup   : List (f [] ())
+  cleanup   : List (Hook f)
 
   ||| list of child scopes
   children  : SortedSet ScopeID
@@ -131,7 +168,6 @@ ScopeST f = SortedMap ScopeID (Node f)
 ||| (synchronous) monad with error handling.
 public export
 interface ELift1 s f => Target s f | f where
-
   ||| Initial scope reference for running a stream.
   scopes : f [] (Ref s (ScopeST f))
 
@@ -240,10 +276,11 @@ parameters {0    f   : List Type -> Type -> Type}
   openScope int sc t =
    let sid          # t := scopeID t
        (sint, cncl) # t := combineInterrupts sc.interrupt int t
+       hooks        # t := traverse1 hook cncl t
     in casupdate1 ref (\ss =>
         let par  := openSelfOrAncestor ss sc
             ancs := sc.id :: sc.ancestors
-            node := N (Scope.S sid sc.root ancs sint) cncl empty
+            node := N (Scope.S sid sc.root ancs sint) hooks empty
             par2 := {children $= insert sid} par
          in (insertScope par2 $ insertScope node ss, node.scope)) t
 
@@ -251,10 +288,11 @@ parameters {0    f   : List Type -> Type -> Type}
   ||| open parent scope.
   export %inline
   addHook : Scope f -> f [] () -> f [] ()
-  addHook sc hook =
+  addHook sc act = do
+    hk <- lift1 (hook act)
     Ref1.mod ref $ \ss =>
-     let res := {cleanup $= (hook ::)} (openSelfOrAncestor ss sc)
-      in insertScope res ss
+      let res := {cleanup $= (hk ::)} (openSelfOrAncestor ss sc)
+       in insertScope res ss
 
   ||| Closes the scope of the given ID plus all its child scopes,
   ||| releasing all allocated resources in reverse order of allocation
@@ -262,8 +300,8 @@ parameters {0    f   : List Type -> Type -> Type}
   export
   close : (removeFromParent : Bool) -> ScopeID -> f [] ()
 
-  closeAll : List ScopeID -> List (f [] ()) -> f [] ()
-  closeAll []        cl = sequence_ cl
+  closeAll : List ScopeID -> List (Hook f) -> f [] ()
+  closeAll []        cl = traverse_ cleanup cl
   closeAll (x :: xs) cl = assert_total $ close False x >> closeAll xs cl
 
   close b id = do
@@ -274,6 +312,22 @@ parameters {0    f   : List Type -> Type -> Type}
          let ss2 := removeChild b sc.scope $ delete id ss
           in (ss2, closeAll (reverse $ Prelude.toList sc.children) sc.cleanup)
     act
+
+  findNode : ScopeID -> f [] (Maybe $ Node f)
+  findNode x = lookup x <$> readref ref
+
+  ||| Leases all cleanup hooks from this scope as well as its direct
+  ||| children and ancestors.
+  |||
+  ||| Invoke the given action to release them again.
+  export
+  lease : Scope f -> f [] (f [] ())
+  lease sc = do
+   Just nd <- findNode sc.id | Nothing => pure (pure ())
+   let allScopes := Prelude.toList nd.children ++ [sc.id] ++ sc.ancestors
+   ns <- mapMaybe id <$> traverse findNode allScopes
+   cs <- traverse lease (ns >>= cleanup)
+   pure (sequence_ cs)
 
 ||| Creates a new root scope and returns it together with the set of
 ||| scopes for the given effect type.

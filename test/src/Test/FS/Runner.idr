@@ -136,6 +136,17 @@ released : Runres es ev o r -> List ev
 released = mapMaybe unrelease . events
 
 export
+first : List o -> Maybe o
+first (h::_) = Just h
+first []     = Nothing
+
+export
+last : List o -> Maybe o
+last [v]     = Just v
+last (_::vs) = last vs
+last []      = Nothing
+
+export
 output : Runres es ev o r -> List o
 output = mapMaybe unout . events
 
@@ -196,6 +207,14 @@ parameters {0 es  : List Type}
   export covering %inline
   assertSortedReleased : Show ev => Ord ev => (exp : List ev) -> Test e
   assertSortedReleased = assertPull (sort . released)
+
+  export covering %inline
+  assertLastReleased : Show ev => Eq ev => (exp : Maybe ev) -> Test e
+  assertLastReleased = assertPull (last . released)
+
+  export covering %inline
+  assertFirstReleased : Show ev => Eq ev => (exp : Maybe ev) -> Test e
+  assertFirstReleased = assertPull (first . released)
 
   export covering %inline
   assertEvents : Show o => Eq o => Show ev => Eq ev => List (Event ev o) -> Test e

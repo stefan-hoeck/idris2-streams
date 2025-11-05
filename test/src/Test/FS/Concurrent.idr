@@ -42,6 +42,19 @@ parameters {auto sr : Sink (Action Nat)}
   mergeBothErr2 : AsyncStream e [String] Nat
   mergeBothErr2 = mergeHaltBoth (timedN 2 21.ms) (errN 1 10.ms)
 
+  parallel : AsyncStream e [String] (AsyncStream e [String] Nat)
+  parallel =
+       timedN 0 10.ms
+    |> P.runningCount
+    |> P.take 3
+    |> mapOutput (\n => timedN n 3.ms |> P.take 5)
+
+  switchOuter : AsyncStream e [String] Nat
+  switchOuter = timedN 0 10.ms |> P.count |> P.take 3
+
+  switchInner : Nat -> AsyncStream e [String] Nat
+  switchInner n = timedN n 3.ms |> P.take 5
+
 covering
 instrs : TimerH e => List (FlatSpecInstr e)
 instrs =
@@ -116,6 +129,21 @@ instrs =
 
   , it `should` "release all acquired resources even if the second stream failed" !:
       assertSortedReleased Nat mergeBothErr2 [1,2]
+
+  , "a stream created with parJoin" `should` "run all inner streams to completion" !:
+      assertSorted Nat (parJoin 3 parallel) [1,1,1,1,1,2,2,2,2,2,3,3,3,3,3]
+
+  , it `should` "allocate all required resources" !:
+      assertSortedAcquired Nat (parJoin 3 parallel) [0,1,2,3]
+
+  , it `should` "release all acquired resources" !:
+      assertSortedReleased Nat (parJoin 3 parallel) [0,1,2,3]
+
+  , it `should` "release resources from inner streams before the ones from the outer stream" !:
+      assertLastReleased Nat (parJoin 3 parallel) (Just 0)
+
+  -- , "a stream created with switchMap" `should` "stop inner streams upon output from the outer stream" !:
+  --     assertOut Nat (switchMap switchInner switchOuter) [1,1,1,2,2,2,3,3,3,3,3]
   ]
 
 export covering

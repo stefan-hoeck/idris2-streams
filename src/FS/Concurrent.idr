@@ -216,15 +216,15 @@ parameters (done      : Deferred World (Result es ()))
   -- or fails with an error. In case of an error, the `done` flag is set
   -- immediately to hold the error and stop all other running streams.
   covering
-  inner : AsyncStream e es o -> Async e es ()
-  inner s =
+  inner : Scope (Async e) -> AsyncStream e es o -> Async e es ()
+  inner sc s =
     uncancelable $ \poll => do
       poll (acquire available) -- wait for a fiber to become available
       modify running S         -- increase the number of running fibers
       poll $ ignore $ parrunCase sc
         done
         (\o => putErr done o >> decRunning >> release available)
-        (foreach (ignore . send output) s)
+        (lease sc >> foreach (ignore . send output) s)
 
   -- Runs the outer stream on its own fiber until it terminates gracefully
   -- or fails with an error.
@@ -234,7 +234,7 @@ parameters (done      : Deferred World (Result es ()))
     assert_total $ parrunCase sc
       done
       (\o => putErr done o >> decRunning >> until running (== 0))
-      (foreach (inner . newScope) ss)
+      (scope >>= \sc => foreach (inner sc . newScope) ss)
 
 ||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
 ||| opening at most `maxOpen` streams at any point in time.
@@ -269,7 +269,7 @@ parJoin maxOpen out = do
   -- Signals exhaustion of the output stream (for instance, due
   -- to a `take n`). It will interrupt evaluation of the
   -- input stream and all child streams.
-  done      <- deferredOf {s = World} (Result es ())
+  done      <- deferredOf (Result es ())
 
   -- Concurrent slots available. Child streams will wait on this
   -- before being started.
@@ -354,3 +354,48 @@ foreachPar maxOpen sink outer = do
     run available v = do
       acquire available
       ignore $ start (guarantee (sink v) (release available))
+
+--------------------------------------------------------------------------------
+-- Switch Map
+--------------------------------------------------------------------------------
+
+parameters (ps    : AsyncStream e es p)
+           (guard : Semaphore)
+
+    switchInner : Deferred World () -> AsyncStream e es p
+    switchInner halt =
+      bracket (acquire guard) (const $ release guard) $ \_ =>
+        interruptOnAny halt ps
+
+    switchHalted : IORef (Maybe $ Deferred World ()) -> Async e es (AsyncStream e es p)
+    switchHalted ref = do
+      halt <- deferredOf ()
+      prev <- update ref (Just halt,)
+      for_ prev $ \p => putDeferred p ()
+      pure $ switchInner halt
+
+||| Like `flatMap` but interrupts the inner stream when
+||| new elements arrive in the outer stream.
+|||
+||| Finializers of each inner stream are guaranteed to run
+||| before the next inner stream starts.
+||| When the outer stream stops gracefully, the currently running
+||| inner stream will continue to run.
+|||
+||| When an inner stream terminates/interrupts, nothing
+||| happens until the next element arrives
+||| in the outer stream.
+|||
+||| When either the inner or outer stream fails, the entire
+||| stream fails and the finalizer of the
+||| inner stream runs before the outer one.
+|||
+export
+switchMap :
+     (o -> AsyncStream e es p)
+  -> AsyncStream e es o
+  -> AsyncStream e es p
+switchMap f os = do
+  guard <- semaphore 1
+  ref   <- newref Nothing
+  parJoin 2 (evalMap (\v => switchHalted (f v) guard ref) os)
