@@ -28,7 +28,7 @@ parameters {auto sr : Sink (Action Nat)}
     newScope (weakenErrors $ acq 1) >> P.replicate 2 five
 
 covering
-instrs : TimerH e => List (FlatSpecInstr e)
+instrs : List (FlatSpecInstr e)
 instrs =
   [ "a stream's resource" `should` "be acquired before the stream is run" !:
       assertAcquired Nat (acq 200) [200]
@@ -67,5 +67,5 @@ instrs =
   ]
 
 export covering
-specs : TimerH e => TestTree e
+specs : TestTree e
 specs = flatSpec "Resource Spec" instrs

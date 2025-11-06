@@ -9,6 +9,7 @@ import Data.Linear.Deferred
 import Data.Linear.Ref1
 import Data.Maybe
 import Data.SortedMap
+import Debug.Trace
 import IO.Async
 
 %default total
@@ -22,7 +23,6 @@ data Action :
   -> Type where
   Eval    : (act : f es r) -> Action f es r
   Acquire : f es r -> (r -> f [] ()) -> Action f es r
-  Lease   : Scope f -> Action f es ()
   Close   : Scope f -> Result es r -> Action f es r
 
 --------------------------------------------------------------------------------
@@ -195,11 +195,6 @@ scope = GScope
 export %inline
 newScope : Pull f o es r -> Pull f o es r
 newScope = OScope None
-
-|||
-export %inline
-lease : Scope f -> Pull f o es ()
-lease = Act . Lease
 
 ||| Forces the given `Pull` to be evaluated in the given scope.
 |||
@@ -378,7 +373,7 @@ parameters {0 f      : List Type -> Type -> Type}
         Val v => view sc (g v) st t
         _     => view sc q (B g::st) t
 
-      -- We arrived at a terminal (a result), at it's time to
+      -- We arrived at a terminal (a result), and it's time to
       -- pass it to the head of the stack (if any).
       Val v => case st of
         h::tl => case h of
@@ -443,7 +438,7 @@ parameters {0 f      : List Type -> Type -> Type}
       -- output has been consumed, or consumption is aborted)
       Cons v q =>
        let UR sc2 p2 st2 := traceOutput sc v q st
-        in view sc2 p2 st2 t
+        in view sc2 (IScope sc False p2) st2 t
 
       -- An effectful computation. We have to stop here and pass control
       -- to `loop`
@@ -519,14 +514,9 @@ parameters {0 f      : List Type -> Type -> Type}
         -- TODO: This currently does not take cancellation (of `Async`)
         --       into account and should be fixed.
         Acquire act release => raceInterrupt sc.interrupt act >>= \case
-          Succeeded v => addHook ref sc2 (release v) >> loop sc2 (Val v) st2
+          Succeeded v => addHook sc2 (release v) >> loop sc2 (Val v) st2
           Error x     => loop sc2 (Err x) st2
           Canceled    => interrupted sc2 st2
-
-        Lease sc => Prelude.do
-          cl <- Scope.lease ref sc
-          addHook ref sc2 cl
-          loop sc2 (Val ()) st2
 
         -- Scope `old` has come to an end and should be closed, thus
         -- releasing all resources that have been aqcuired within.
@@ -563,15 +553,6 @@ parameters {0 f      : List Type -> Type -> Type}
 parameters {auto mcn : MCancel f}
            {auto tgt : Target s f}
 
-  ||| Runs a Pull to completion in the given scope, without
-  ||| closing the scope. Use this when the pull was generated from
-  ||| an outer scope that is still in use.
-  export covering
-  pullIn : Scope f -> Pull f Void es r -> f [] (Outcome es r)
-  pullIn sc p = do
-    ref <- scopes
-    loop ref sc p []
-
   ||| Runs a `Pull` to completion, eventually producing
   ||| a value of type `r`.
   |||
@@ -583,8 +564,8 @@ parameters {auto mcn : MCancel f}
   pull : Pull f Void es r -> f [] (Outcome es r)
   pull p =
     bracket newScope
-      (\(sc,ref) => loop ref sc p [])
-      (\(sc,ref) => close ref False sc.id)
+      (\(S i rt as ir ref) => loop ref (S i rt as ir ref) p [])
+      (\(S i rt as ir ref) => close ref False i)
 
   ||| Like `pull` but without the possibility of failure. Returns `neutral`
   ||| in case the stream was interrupted.
@@ -595,3 +576,10 @@ parameters {auto mcn : MCancel f}
       Succeeded res => pure res
       Canceled      => pure neutral
       Error x impossible
+
+||| Runs a Pull to completion in the given scope, without
+||| closing the scope. Use this when the pull was generated from
+||| an outer scope that is still in use.
+export covering
+pullIn : Scope f -> Pull f Void es r -> f [] (Outcome es r)
+pullIn (S i rt as ir ref) p = loop ref (S i rt as ir ref) p []

@@ -39,6 +39,10 @@ export %inline
 alloc : (h : Sink (Action a)) => a -> Async e es (Handled a)
 alloc v = lift1 (h.sink (A v)) $> H v
 
+export %inline
+allocNat : Sink (Action Nat) => Nat -> Async e es (Handled Nat)
+allocNat = alloc
+
 public export
 data Event : (r,o : Type) -> Type where
   Out     : (val : o) -> Event r o

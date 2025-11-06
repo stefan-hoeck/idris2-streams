@@ -193,12 +193,27 @@ mergeHaltBoth s1 s2 =
 -- Parallel Joining of Streams
 --------------------------------------------------------------------------------
 
+upd : Maybe (Async e [] ()) -> (Maybe (Async e [] ()), Bool)
+upd Nothing  = (Just $ pure (), True)
+upd (Just x) = (Just x, False)
+
 -- `parJoin` implementation
 parameters (done      : Deferred World (Result es ()))
            (available : Semaphore)
            (running   : SignalRef Nat)
            (output    : Channel o)
+           (leaseref  : Ref World (Maybe $ Async e [] ()))
            (sc        : Scope (Async e))
+
+
+  doLease : Scope (Async e) -> Async e es ()
+  doLease sc = do
+    True <- update leaseref upd | False => pure ()
+    cl   <- weakenErrors (lease sc)
+    writeref leaseref (Just cl)
+
+  doUnlease : Async e [] ()
+  doUnlease = readref leaseref >>= sequence_
 
   -- Every time an inner or the outer stream terminates, the number
   -- of running fibers is reduced by one. If this reaches zero, no
@@ -216,15 +231,16 @@ parameters (done      : Deferred World (Result es ()))
   -- or fails with an error. In case of an error, the `done` flag is set
   -- immediately to hold the error and stop all other running streams.
   covering
-  inner : AsyncStream e es o -> Scope (Async e) -> Async e es ()
-  inner s sc =
+  inner : AsyncStream e es o -> Async e es ()
+  inner s =
     uncancelable $ \poll => do
+      logScope "parJoin-inner" sc
       poll (acquire available) -- wait for a fiber to become available
       modify running S         -- increase the number of running fibers
       poll $ ignore $ parrunCase sc
         done
         (\o => putErr done o >> decRunning >> release available)
-        (lease sc >> foreach (ignore . send output) s)
+        (foreach (ignore . send output) s)
 
   -- Runs the outer stream on its own fiber until it terminates gracefully
   -- or fails with an error.
@@ -233,8 +249,10 @@ parameters (done      : Deferred World (Result es ()))
   outer ss =
     assert_total $ parrunCase sc
       done
-      (\o => putErr done o >> decRunning >> until running (== 0))
-      (flatMap ss $ \v => scope >>= exec . inner v)
+      (\o => putErr done o >> decRunning >> until running (== 0) >> doUnlease) $
+        flatMap ss $ \v => do
+          sc <- scope
+          exec (doLease sc >> inner v)
 
 ||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
 ||| opening at most `maxOpen` streams at any point in time.
@@ -263,8 +281,11 @@ parJoin :
   -> {auto 0 prf : IsSucc maxOpen}
   -> (outer      : AsyncStream e es (AsyncStream e es o))
   -> AsyncStream e es o
+parJoin 1       out = flatMap out id
 parJoin maxOpen out = do
   sc <- scope
+
+  leaseref  <- newref {a = Maybe (Async e [] ())} Nothing
 
   -- Signals exhaustion of the output stream (for instance, due
   -- to a `take n`). It will interrupt evaluation of the
@@ -281,10 +302,10 @@ parJoin maxOpen out = do
   -- closed when the last child was exhausted.
   output    <- channelOf o 0
 
-  fbr       <- exec $ outer done available running output sc out
+  fbr       <- exec $ outer done available running output leaseref sc out
+
   -- The resulting stream should cleanup resources when it is done.
   -- It should also finalize `done`.
-
   finally
     (putDeferred done (Right ()) >> wait fbr)
     (interruptOn done (receive output))

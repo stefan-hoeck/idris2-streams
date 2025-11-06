@@ -8,7 +8,11 @@ parameters {auto sr : Sink (Action Nat)}
            {auto ti : TimerH e}
 
   timedN : Nat -> Clock Duration -> AsyncStream e es Nat
-  timedN x cl = bracket (Runner.alloc x) cleanup $ \n => timed cl n.val
+  timedN x cl =
+    bracket (Runner.alloc x) cleanup $ \n => do
+      sc <- scope
+      exec $ logScope "timedN" sc
+      timed cl n.val
 
   errN : Nat -> Clock Duration -> AsyncStream e [String] Nat
   errN x cl =
@@ -44,10 +48,10 @@ parameters {auto sr : Sink (Action Nat)}
 
   parallel : AsyncStream e [String] (AsyncStream e [String] Nat)
   parallel =
-       timedN 0 10.ms
-    |> P.runningCount
-    |> P.take 3
-    |> mapOutput (\n => timedN n 3.ms |> P.take 5)
+    bracket (Runner.alloc Z) cleanup $ \n => do
+      sc <- scope
+      exec $ logScope "parallel" sc
+      timed 10.ms n.val |> P.runningCount |> P.take 3 |> mapOutput (\n => timedN n 3.ms |> P.take 5)
 
   switchOuter : AsyncStream e [String] Nat
   switchOuter = timedN 0 10.ms |> P.count |> P.take 3
