@@ -25,14 +25,15 @@ record Hook (f : List Type -> Type -> Type) where
   cleanup : f [] ()
   lease   : f [] (f [] ())
 
-updCleanup, updUnlease, updLease : (Bool,Nat) -> ((Bool,Nat),Bool)
+updCleanup, updUnlease : (Bool,Nat) -> ((Bool,Nat),Bool)
 updCleanup (False,b) = ((True,b),b == 0)
 updCleanup p         = (p,False)
 
 updUnlease (b,1) = ((b,0),b)
 updUnlease (b,n) = ((b,pred n),False)
 
-updLease (b,n) = ((b,S n),True)
+updLease : (Bool,Nat) -> ((Bool,Nat),())
+updLease (b,n) = ((b,S n),())
 
 hook : ELift1 s f => f [] () -> F1 s (Hook f)
 hook act t =
@@ -47,9 +48,7 @@ hook act t =
     unlease state = when !(update state updUnlease) act
 
     ls : Ref s (Bool,Nat) -> f [] (f [] ())
-    ls state = do
-      True <- update state updLease | False => pure (pure ())
-      pure (unlease state)
+    ls state = update state updLease $> unlease state
 
 --------------------------------------------------------------------------------
 -- Interrupt
@@ -99,6 +98,14 @@ export %inline
 Show ScopeID where
   show = show . val
 
+export
+record Node (f : List Type -> Type -> Type)
+
+||| State of scopes of a running stream.
+public export
+0 ScopeST : (f : List Type -> Type -> Type) -> Type
+ScopeST f = SortedMap ScopeID (Node f)
+
 ||| Cancelation scopes
 |||
 ||| Functional streams are evaluated in scopes, which are organized as
@@ -121,6 +128,8 @@ Show ScopeID where
 public export
 record Scope (f : List Type -> Type -> Type) where
   constructor S
+  {0 tstate : Type}
+
   ||| this scope's unique identifier
   id        : ScopeID
 
@@ -132,6 +141,10 @@ record Scope (f : List Type -> Type -> Type) where
 
   ||| Handler to check for stream interruption
   interrupt : Interrupt f
+
+  state     : Ref tstate (ScopeST f)
+
+  {auto elift : ELift1 tstate f}
 
 -- a node in the scope graph
 export
@@ -145,11 +158,6 @@ record Node (f : List Type -> Type -> Type) where
 
   ||| list of child scopes
   children  : SortedSet ScopeID
-
-||| State of scopes of a running stream.
-public export
-0 ScopeST : (f : List Type -> Type -> Type) -> Type
-ScopeST f = SortedMap ScopeID (Node f)
 
 --------------------------------------------------------------------------------
 -- Compilation Targets
@@ -216,44 +224,43 @@ Target World (Async e) where
 -- Handling Scopes
 --------------------------------------------------------------------------------
 
--- There is always a `root` scope, which is the parent of
--- of all scopes.
-getRoot : ScopeID -> ScopeST f -> Node f
-getRoot id = fromMaybe (N (S id id [] None) [] empty) . lookup id
-
 -- Inserts a new scope. In case of the root scope, field
 -- `rootChildren` is adjusted.
 insertScope : Node f -> ScopeST f -> ScopeST f
 insertScope s = insert s.scope.id s
 
--- Finds the closest ancestor scope that is still open.
---
--- Note: The `root` scope cannot be fully closed, so this will always
---       return a sope.
-openAncestor : ScopeST f -> Scope f -> Node f
-openAncestor ss s = go s.ancestors
-  where
-    go : List ScopeID -> Node f
-    go []        = getRoot s.root ss
-    go (x :: xs) = fromMaybe (go xs) (lookup x ss)
+parameters {auto elift : ELift1 s f}
+           (ref        : Ref s (ScopeST f))
 
--- Returns the given scope if it is still open or its closest ancestor.
---
--- Note: The `root` scope cannot be fully closed, so this will always
---       return a sope.
-openSelfOrAncestor : ScopeST f -> Scope f -> Node f
-openSelfOrAncestor ss sc =
-  fromMaybe (openAncestor ss sc) (lookup sc.id ss)
+  -- There is always a `root` scope, which is the parent of
+  -- of all scopes.
+  getRoot : ScopeID -> ScopeST f -> Node f
+  getRoot id = fromMaybe (N (S id id [] None ref) [] empty) . lookup id
 
-removeChild : Bool -> Scope f -> ScopeST f -> ScopeST f
-removeChild False sc st = st
-removeChild True  sc st =
- let par := openAncestor st sc
-  in insertScope ({children $= delete sc.id} par) st
+  -- Finds the closest ancestor scope that is still open.
+  --
+  -- Note: The `root` scope cannot be fully closed, so this will always
+  --       return a sope.
+  openAncestor : ScopeST f -> Scope f -> Node f
+  openAncestor ss s = go s.ancestors
+    where
+      go : List ScopeID -> Node f
+      go []        = getRoot s.root ss
+      go (x :: xs) = fromMaybe (go xs) (lookup x ss)
 
-parameters {0    f   : List Type -> Type -> Type}
-           {auto tgt : Target s f}
-           (ref      : Ref s (ScopeST f))
+  -- Returns the given scope if it is still open or its closest ancestor.
+  --
+  -- Note: The `root` scope cannot be fully closed, so this will always
+  --       return a sope.
+  openSelfOrAncestor : ScopeST f -> Scope f -> Node f
+  openSelfOrAncestor ss sc =
+    fromMaybe (openAncestor ss sc) (lookup sc.id ss)
+
+  removeChild : Bool -> Scope f -> ScopeST f -> ScopeST f
+  removeChild False sc st = st
+  removeChild True  sc st =
+   let par := openAncestor st sc
+    in insertScope ({children $= delete sc.id} par) st
 
   scopeID : F1 s ScopeID
   scopeID t = let tok # t := token1 t in SID (unsafeVal tok) # t
@@ -262,78 +269,84 @@ parameters {0    f   : List Type -> Type -> Type}
   root : F1 s (Scope f)
   root t =
     let sid # t := scopeID t
-        r       := N (S sid sid [] None) [] empty
+        r       := N (S sid sid [] None ref) [] empty
         _   # t := mod1 ref (insertScope r) t
      in r.scope # t
 
-  ||| Opens and returns a new child scope for the given parent
-  ||| scope.
-  |||
-  ||| If the parent scope has already been closed, its closest
-  ||| open ancestor will be used as the new scope's parent instead.
-  export
-  openScope : Interrupt f -> Scope f -> F1 s (Scope f)
-  openScope int sc t =
-   let sid          # t := scopeID t
-       (sint, cncl) # t := combineInterrupts sc.interrupt int t
-       hooks        # t := traverse1 hook cncl t
-    in casupdate1 ref (\ss =>
-        let par  := openSelfOrAncestor ss sc
-            ancs := sc.id :: sc.ancestors
-            node := N (Scope.S sid sc.root ancs sint) hooks empty
-            par2 := {children $= insert sid} par
-         in (insertScope par2 $ insertScope node ss, node.scope)) t
-
-  ||| Adds a new cleanup hook to the given scope or its closest
-  ||| open parent scope.
-  export %inline
-  addHook : Scope f -> f [] () -> f [] ()
-  addHook sc act = do
-    hk <- lift1 (hook act)
-    Ref1.mod ref $ \ss =>
-      let res := {cleanup $= (hk ::)} (openSelfOrAncestor ss sc)
-       in insertScope res ss
-
-  ||| Closes the scope of the given ID plus all its child scopes,
-  ||| releasing all allocated resources in reverse order of allocation
-  ||| along the way.
-  export
-  close : (removeFromParent : Bool) -> ScopeID -> f [] ()
-
-  closeAll : List ScopeID -> List (Hook f) -> f [] ()
-  closeAll []        cl = traverse_ cleanup cl
-  closeAll (x :: xs) cl = assert_total $ close False x >> closeAll xs cl
-
-  close b id = do
-    act <- update ref $ \ss =>
-      case lookup id ss of
-        Nothing => (ss, pure ())
-        Just sc =>
-         let ss2 := removeChild b sc.scope $ delete id ss
-          in (ss2, closeAll (reverse $ Prelude.toList sc.children) sc.cleanup)
-    act
-
-  findNode : ScopeID -> f [] (Maybe $ Node f)
-  findNode x = lookup x <$> readref ref
-
-  ||| Leases all cleanup hooks from this scope as well as its direct
-  ||| children and ancestors.
-  |||
-  ||| Invoke the given action to release them again.
-  export
-  lease : Scope f -> f [] (f [] ())
-  lease sc = do
-   Just nd <- findNode sc.id | Nothing => pure (pure ())
-   let allScopes := Prelude.toList nd.children ++ [sc.id] ++ sc.ancestors
-   ns <- mapMaybe id <$> traverse findNode allScopes
-   cs <- traverse lease (ns >>= cleanup)
-   pure (sequence_ cs)
-
-||| Creates a new root scope and returns it together with the set of
-||| scopes for the given effect type.
-export %inline
-newScope : Target s f => f [] (Scope f, Ref s (ScopeST f))
-newScope = do
- ref <- scopes
- sc  <- lift1 (FS.Scope.root ref)
- pure (sc, ref)
+-- parameters {0    f   : List Type -> Type -> Type}
+--            {auto tgt : Target s f}
+--            (ref      : Ref s (ScopeST f))
+--
+--
+--
+--   ||| Opens and returns a new child scope for the given parent
+--   ||| scope.
+--   |||
+--   ||| If the parent scope has already been closed, its closest
+--   ||| open ancestor will be used as the new scope's parent instead.
+--   export
+--   openScope : Interrupt f -> Scope f -> F1 s (Scope f)
+--   openScope int sc t =
+--    let sid          # t := scopeID t
+--        (sint, cncl) # t := combineInterrupts sc.interrupt int t
+--        hooks        # t := traverse1 hook cncl t
+--     in casupdate1 ref (\ss =>
+--         let par  := openSelfOrAncestor ss sc
+--             ancs := sc.id :: sc.ancestors
+--             node := N (Scope.S sid sc.root ancs sint) hooks empty
+--             par2 := {children $= insert sid} par
+--          in (insertScope par2 $ insertScope node ss, node.scope)) t
+--
+--   ||| Adds a new cleanup hook to the given scope or its closest
+--   ||| open parent scope.
+--   export %inline
+--   addHook : Scope f -> f [] () -> f [] ()
+--   addHook sc act = do
+--     hk <- lift1 (hook act)
+--     Ref1.mod ref $ \ss =>
+--       let res := {cleanup $= (hk ::)} (openSelfOrAncestor ss sc)
+--        in insertScope res ss
+--
+--   ||| Closes the scope of the given ID plus all its child scopes,
+--   ||| releasing all allocated resources in reverse order of allocation
+--   ||| along the way.
+--   export
+--   close : (removeFromParent : Bool) -> ScopeID -> f [] ()
+--
+--   closeAll : List ScopeID -> List (Hook f) -> f [] ()
+--   closeAll []        cl = traverse_ cleanup cl
+--   closeAll (x :: xs) cl = assert_total $ close False x >> closeAll xs cl
+--
+--   close b id = do
+--     act <- update ref $ \ss =>
+--       case lookup id ss of
+--         Nothing => (ss, pure ())
+--         Just sc =>
+--          let ss2 := removeChild b sc.scope $ delete id ss
+--           in (ss2, closeAll (reverse $ Prelude.toList sc.children) sc.cleanup)
+--     act
+--
+--   findNode : ScopeID -> f [] (Maybe $ Node f)
+--   findNode x = lookup x <$> readref ref
+--
+--   ||| Leases all cleanup hooks from this scope as well as its direct
+--   ||| children and ancestors.
+--   |||
+--   ||| Invoke the given action to release them again.
+--   export
+--   lease : Scope f -> f [] (f [] ())
+--   lease sc = do
+--    Just nd <- findNode sc.id | Nothing => pure (pure ())
+--    let allScopes := sc.id :: sc.ancestors
+--    ns <- mapMaybe id <$> traverse findNode allScopes
+--    cs <- traverse lease (ns >>= cleanup)
+--    pure (sequence_ cs)
+--
+-- ||| Creates a new root scope and returns it together with the set of
+-- ||| scopes for the given effect type.
+-- export %inline
+-- newScope : Target s f => f [] (Scope f, Ref s (ScopeST f))
+-- newScope = do
+--  ref <- scopes
+--  sc  <- lift1 (FS.Scope.root ref)
+--  pure (sc, ref)

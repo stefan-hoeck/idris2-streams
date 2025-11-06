@@ -216,8 +216,8 @@ parameters (done      : Deferred World (Result es ()))
   -- or fails with an error. In case of an error, the `done` flag is set
   -- immediately to hold the error and stop all other running streams.
   covering
-  inner : Scope (Async e) -> AsyncStream e es o -> Async e es ()
-  inner sc s =
+  inner : AsyncStream e es o -> Scope (Async e) -> Async e es ()
+  inner s sc =
     uncancelable $ \poll => do
       poll (acquire available) -- wait for a fiber to become available
       modify running S         -- increase the number of running fibers
@@ -234,7 +234,7 @@ parameters (done      : Deferred World (Result es ()))
     assert_total $ parrunCase sc
       done
       (\o => putErr done o >> decRunning >> until running (== 0))
-      (scope >>= \sc => foreach (inner sc . newScope) ss)
+      (flatMap ss $ \v => scope >>= exec . inner v)
 
 ||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
 ||| opening at most `maxOpen` streams at any point in time.
