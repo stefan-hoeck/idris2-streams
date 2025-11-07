@@ -140,6 +140,19 @@ released : Runres es ev o r -> List ev
 released = mapMaybe unrelease . events
 
 export
+notReleased : Ord ev => Runres es ev o r -> List ev
+notReleased x = go [<] (sort $ acquired x) (sort $ released x)
+  where
+    go : SnocList ev -> (aq,rel : List ev) -> List ev
+    go sx aq      []      = sx <>> aq
+    go sx []      _       = sx <>> []
+    go sx (a::as) (r::rs) =
+      case compare a r of
+        EQ => go sx as rs
+        LT => go (sx:<a) as (r::rs)
+        GT => go sx (a::as) rs
+
+export
 first : List o -> Maybe o
 first (h::_) = Just h
 first []     = Nothing
@@ -235,3 +248,7 @@ parameters {0 es  : List Type}
   export covering %inline
   assertCanceled : Test e
   assertCanceled = assertPull canceled True
+
+  export covering %inline
+  assertReleasedAll : Show ev => Ord ev => Test e
+  assertReleasedAll = assertPull notReleased []

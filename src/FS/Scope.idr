@@ -257,6 +257,9 @@ removeChild True  sc st =
  let par := openAncestor st sc
   in insertScope ({children $= delete sc.id} par) st
 
+deleteNode : ScopeST f -> Node f -> ScopeST f
+deleteNode m n = delete n.scope.id m
+
 -- Creates a new root scope
 root : Target s f => STRef s f -> F1 s (Scope f)
 root ref t =
@@ -293,6 +296,26 @@ addHook sc@(S {}) act = do
     let res := {cleanup $= (hk ::)} (openSelfOrAncestor ss sc)
      in insertScope res ss
 
+parameters (ref : STRef s f)
+  findNode : ScopeID -> F1 s (Maybe $ Node f)
+  findNode x t = let st # t := read1 ref t in lookup x st # t
+
+  findNodes : List ScopeID -> F1 s (List $ Node f)
+  findNodes xs t = let ms # t := traverse1 findNode xs t in catMaybes ms # t
+
+  childNodesL : List (Node f) -> List (Node f) -> F1 s (List (Node f))
+
+  childNodes : List (Node f) -> Node f -> F1 s (List (Node f))
+  childNodes ns n t =
+   let ns2 # t := findNodes (reverse $ Prelude.toList n.children) t
+    in childNodesL (n::ns) ns2 t
+
+  childNodesL ns []      t = ns # t
+  childNodesL ns (c::cs) t =
+    assert_total $
+     let ns2 # t := childNodes ns c t
+      in childNodesL ns2 cs t
+
 parameters {auto tgt : Target s f}
            (ref      : STRef s f)
 
@@ -300,23 +323,12 @@ parameters {auto tgt : Target s f}
   ||| releasing all allocated resources in reverse order of allocation
   ||| along the way.
   export
-  close : (removeFromParent : Bool) -> ScopeID -> f [] ()
-
-  closeAll : List ScopeID -> List (Hook f) -> f [] ()
-  closeAll []        cl = traverse_ cleanup cl
-  closeAll (x :: xs) cl = assert_total $ close False x >> closeAll xs cl
-
+  close : (remove : Bool) -> ScopeID -> f [] ()
   close b id = do
-    act <- update ref $ \ss =>
-      case lookup id ss of
-        Nothing => (ss, pure ())
-        Just sc =>
-         let ss2 := removeChild b sc.scope $ delete id ss
-          in (ss2, closeAll (reverse $ Prelude.toList sc.children) sc.cleanup)
-    act
-
-  findNode : ScopeID -> f [] (Maybe $ Node f)
-  findNode x = lookup x <$> readref ref
+    Just n <- lift1 (findNode ref id) | Nothing => pure ()
+    cs     <- lift1 (childNodes ref [] n)
+    mod ref $ \m => removeChild b n.scope (foldl deleteNode m cs)
+    traverse_ cleanup (cs >>= cleanup)
 
 ||| Leases all cleanup hooks from this scope as well as its direct
 ||| children and ancestors.
@@ -325,10 +337,10 @@ parameters {auto tgt : Target s f}
 export
 lease : Scope f -> f [] (f [] ())
 lease sc@(S i r as is ref) = do
-  Just nd <- findNode ref sc.id | Nothing => pure (pure ())
-  let allScopes := i :: as
-  ns <- mapMaybe id <$> traverse (findNode ref) allScopes
-  cs <- traverse lease (ns >>= cleanup)
+  Just nd <- lift1 (findNode ref i) | Nothing => pure (pure ())
+  ns      <- lift1 (findNodes ref as)
+  all     <- lift1 (childNodes ref ns nd)
+  cs      <- traverse lease (all >>= cleanup)
   pure (sequence_ cs)
 
 ||| Creates a new root scope and returns it together with the set of

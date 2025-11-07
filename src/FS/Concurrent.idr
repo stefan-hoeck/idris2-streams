@@ -234,7 +234,6 @@ parameters (done      : Deferred World (Result es ()))
   inner : AsyncStream e es o -> Async e es ()
   inner s =
     uncancelable $ \poll => do
-      logScope "parJoin-inner" sc
       poll (acquire available) -- wait for a fiber to become available
       modify running S         -- increase the number of running fibers
       poll $ ignore $ parrunCase sc
