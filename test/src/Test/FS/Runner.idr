@@ -39,6 +39,10 @@ export %inline
 alloc : (h : Sink (Action a)) => a -> Async e es (Handled a)
 alloc v = lift1 (h.sink (A v)) $> H v
 
+export %inline
+allocNat : Sink (Action Nat) => Nat -> Async e es (Handled Nat)
+allocNat = alloc
+
 public export
 data Event : (r,o : Type) -> Type where
   Out     : (val : o) -> Event r o
@@ -136,6 +140,30 @@ released : Runres es ev o r -> List ev
 released = mapMaybe unrelease . events
 
 export
+notReleased : Ord ev => Runres es ev o r -> List ev
+notReleased x = go [<] (sort $ acquired x) (sort $ released x)
+  where
+    go : SnocList ev -> (aq,rel : List ev) -> List ev
+    go sx aq      []      = sx <>> aq
+    go sx []      _       = sx <>> []
+    go sx (a::as) (r::rs) =
+      case compare a r of
+        EQ => go sx as rs
+        LT => go (sx:<a) as (r::rs)
+        GT => go sx (a::as) rs
+
+export
+first : List o -> Maybe o
+first (h::_) = Just h
+first []     = Nothing
+
+export
+last : List o -> Maybe o
+last [v]     = Just v
+last (_::vs) = last vs
+last []      = Nothing
+
+export
 output : Runres es ev o r -> List o
 output = mapMaybe unout . events
 
@@ -198,6 +226,14 @@ parameters {0 es  : List Type}
   assertSortedReleased = assertPull (sort . released)
 
   export covering %inline
+  assertLastReleased : Show ev => Eq ev => (exp : Maybe ev) -> Test e
+  assertLastReleased = assertPull (last . released)
+
+  export covering %inline
+  assertFirstReleased : Show ev => Eq ev => (exp : Maybe ev) -> Test e
+  assertFirstReleased = assertPull (first . released)
+
+  export covering %inline
   assertEvents : Show o => Eq o => Show ev => Eq ev => List (Event ev o) -> Test e
   assertEvents = assertPull events
 
@@ -212,3 +248,7 @@ parameters {0 es  : List Type}
   export covering %inline
   assertCanceled : Test e
   assertCanceled = assertPull canceled True
+
+  export covering %inline
+  assertReleasedAll : Show ev => Ord ev => Test e
+  assertReleasedAll = assertPull notReleased []

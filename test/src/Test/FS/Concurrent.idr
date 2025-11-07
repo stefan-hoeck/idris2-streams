@@ -42,6 +42,42 @@ parameters {auto sr : Sink (Action Nat)}
   mergeBothErr2 : AsyncStream e [String] Nat
   mergeBothErr2 = mergeHaltBoth (timedN 2 21.ms) (errN 1 10.ms)
 
+  parallel_ :
+       AsyncStream e [String] ()
+    -> (Nat -> AsyncStream e [String] Nat)
+    -> AsyncStream e [String] (AsyncStream e [String] Nat)
+  parallel_ outer f =
+    bracket (Runner.alloc Z) cleanup $ \n => do
+      outer |> P.runningCount |> mapOutput f --
+
+  parallel : AsyncStream e [String] (AsyncStream e [String] Nat)
+  parallel =
+    parallel_ (P.take 3 $ timed 10.ms ()) (\n => timedN n 3.ms |> P.take 5)
+
+  parallelErr : AsyncStream e [String] (AsyncStream e [String] Nat)
+  parallelErr =
+    parallel_ (P.take 3 (timed 10.ms ()) >> throw "Oops") (\n => timedN n 3.ms)
+
+  parallelInnerErr : AsyncStream e [String] (AsyncStream e [String] Nat)
+  parallelInnerErr =
+    parallel_ (timed 10.ms ()) $ \case
+      5 => throw "Oops"
+      n => timedN n 3.ms
+
+  switchOuter : AsyncStream e [String] Nat
+  switchOuter = timedN 0 10.ms |> P.runningCount |> P.take 3
+
+  switchOuterErr : AsyncStream e [String] Nat
+  switchOuterErr = P.take 2 switchOuter >> throw "Oops"
+
+  switchInner : Nat -> AsyncStream e [String] Nat
+  switchInner 3 = timedN 3 3.ms |> P.take 5
+  switchInner n = timedN n 3.ms
+
+  switchInnerErr : Nat -> AsyncStream e [String] Nat
+  switchInnerErr 2 = throw "Oops"
+  switchInnerErr n = switchInner n
+
 covering
 instrs : TimerH e => List (FlatSpecInstr e)
 instrs =
@@ -116,6 +152,54 @@ instrs =
 
   , it `should` "release all acquired resources even if the second stream failed" !:
       assertSortedReleased Nat mergeBothErr2 [1,2]
+
+  , "a stream created with parJoin" `should` "run all inner streams to completion" !:
+      assertSorted Nat (parJoin 3 parallel) [1,1,1,1,1,2,2,2,2,2,3,3,3,3,3]
+
+  , it `should` "allocate all required resources" !:
+      assertSortedAcquired Nat (parJoin 3 parallel) [0,1,2,3]
+
+  , it `should` "release all acquired resources" !:
+      assertSortedReleased Nat (parJoin 3 parallel) [0,1,2,3]
+
+  , it `should` "release resources from inner streams before the ones from the outer stream" !:
+      assertLastReleased Nat (parJoin 3 parallel) (Just 0)
+
+  , it `should` "fail with an error once the outer stream fails" !:
+      assertErr Nat (parJoin 3 parallelErr) "Oops"
+
+  , it `should` "cleanup all allocated resources after the outer stream failed" !:
+      assertReleasedAll Nat (parJoin 3 parallelErr)
+
+  , it `should` "fail with an error once an inner stream fails" !:
+      assertErr Nat (parJoin 10 parallelInnerErr) "Oops"
+
+  , it `should` "cleanup all allocated resources after an inner stream failed" !:
+      assertReleasedAll Nat (parJoin 10 parallelInnerErr)
+
+  , "a stream created with switchMap" `should` "stop inner streams upon output from the outer stream" !:
+      assertOut Nat (switchMap switchInner switchOuter) [1,1,1,2,2,3,3,3,3,3]
+
+  , it `should` "allocate all required resources" !:
+      assertSortedAcquired Nat (switchMap switchInner switchOuter) [0,1,2,3]
+
+  , it `should` "release all allocated resources" !:
+      assertSortedReleased Nat (switchMap switchInner switchOuter) [0,1,2,3]
+
+  , it `should` "release resources from inner streams before the ones from the outer stream" !:
+      assertLastReleased Nat (switchMap switchInner switchOuter) (Just 0)
+
+  , it `should` "fail with an error once the outer stream fails" !:
+      assertErr Nat (switchMap switchInner switchOuterErr) "Oops"
+
+  , it `should` "cleanup all allocated resources after the outer stream failed" !:
+      assertReleasedAll Nat (switchMap switchInner switchOuterErr)
+
+  , it `should` "fail with an error once an inner stream fails" !:
+      assertErr Nat (switchMap switchInnerErr switchOuter) "Oops"
+
+  , it `should` "cleanup all allocated resources after an inner stream failed" !:
+      assertReleasedAll Nat (switchMap switchInnerErr switchOuter)
   ]
 
 export covering

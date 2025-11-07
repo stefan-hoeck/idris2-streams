@@ -193,12 +193,27 @@ mergeHaltBoth s1 s2 =
 -- Parallel Joining of Streams
 --------------------------------------------------------------------------------
 
+upd : Maybe (Async e [] ()) -> (Maybe (Async e [] ()), Bool)
+upd Nothing  = (Just $ pure (), True)
+upd (Just x) = (Just x, False)
+
 -- `parJoin` implementation
 parameters (done      : Deferred World (Result es ()))
            (available : Semaphore)
            (running   : SignalRef Nat)
            (output    : Channel o)
+           (leaseref  : Ref World (Maybe $ Async e [] ()))
            (sc        : Scope (Async e))
+
+
+  doLease : Scope (Async e) -> Async e es ()
+  doLease sc = do
+    True <- update leaseref upd | False => pure ()
+    cl   <- weakenErrors (lease sc)
+    writeref leaseref (Just cl)
+
+  doUnlease : Async e [] ()
+  doUnlease = readref leaseref >>= sequence_
 
   -- Every time an inner or the outer stream terminates, the number
   -- of running fibers is reduced by one. If this reaches zero, no
@@ -233,8 +248,10 @@ parameters (done      : Deferred World (Result es ()))
   outer ss =
     assert_total $ parrunCase sc
       done
-      (\o => putErr done o >> decRunning >> until running (== 0))
-      (foreach (inner . newScope) ss)
+      (\o => putErr done o >> decRunning >> until running (== 0) >> doUnlease) $
+        flatMap ss $ \v => do
+          sc <- scope
+          exec (doLease sc >> inner v)
 
 ||| Nondeterministically merges a stream of streams (`outer`) in to a single stream,
 ||| opening at most `maxOpen` streams at any point in time.
@@ -263,13 +280,16 @@ parJoin :
   -> {auto 0 prf : IsSucc maxOpen}
   -> (outer      : AsyncStream e es (AsyncStream e es o))
   -> AsyncStream e es o
+parJoin 1       out = flatMap out id
 parJoin maxOpen out = do
   sc <- scope
+
+  leaseref  <- newref {a = Maybe (Async e [] ())} Nothing
 
   -- Signals exhaustion of the output stream (for instance, due
   -- to a `take n`). It will interrupt evaluation of the
   -- input stream and all child streams.
-  done      <- deferredOf {s = World} (Result es ())
+  done      <- deferredOf (Result es ())
 
   -- Concurrent slots available. Child streams will wait on this
   -- before being started.
@@ -281,10 +301,10 @@ parJoin maxOpen out = do
   -- closed when the last child was exhausted.
   output    <- channelOf o 0
 
-  fbr       <- exec $ outer done available running output sc out
+  fbr       <- exec $ outer done available running output leaseref sc out
+
   -- The resulting stream should cleanup resources when it is done.
   -- It should also finalize `done`.
-
   finally
     (putDeferred done (Right ()) >> wait fbr)
     (interruptOn done (receive output))
@@ -354,3 +374,48 @@ foreachPar maxOpen sink outer = do
     run available v = do
       acquire available
       ignore $ start (guarantee (sink v) (release available))
+
+--------------------------------------------------------------------------------
+-- Switch Map
+--------------------------------------------------------------------------------
+
+parameters (ps    : AsyncStream e es p)
+           (guard : Semaphore)
+
+    switchInner : Deferred World () -> AsyncStream e es p
+    switchInner halt =
+      bracket (acquire guard) (const $ release guard) $ \_ =>
+        interruptOnAny halt ps
+
+    switchHalted : IORef (Maybe $ Deferred World ()) -> Async e es (AsyncStream e es p)
+    switchHalted ref = do
+      halt <- deferredOf ()
+      prev <- update ref (Just halt,)
+      for_ prev $ \p => putDeferred p ()
+      pure $ switchInner halt
+
+||| Like `flatMap` but interrupts the inner stream when
+||| new elements arrive in the outer stream.
+|||
+||| Finializers of each inner stream are guaranteed to run
+||| before the next inner stream starts.
+||| When the outer stream stops gracefully, the currently running
+||| inner stream will continue to run.
+|||
+||| When an inner stream terminates/interrupts, nothing
+||| happens until the next element arrives
+||| in the outer stream.
+|||
+||| When either the inner or outer stream fails, the entire
+||| stream fails and the finalizer of the
+||| inner stream runs before the outer one.
+|||
+export
+switchMap :
+     (o -> AsyncStream e es p)
+  -> AsyncStream e es o
+  -> AsyncStream e es p
+switchMap f os = do
+  guard <- semaphore 1
+  ref   <- newref Nothing
+  parJoin 2 (evalMap (\v => switchHalted (f v) guard ref) os)
