@@ -481,16 +481,77 @@ Scan List where
 --------------------------------------------------------------------------------
 -- Zipping
 --------------------------------------------------------------------------------
---
--- public export
--- data ZipRes : (a,b,c : Type) -> Type where
---   Z  : List c -> ZipRes a b c
---   ZL : List a -> List c -> ZipRes a b c
---   ZR : List b -> List c -> ZipRes a b c
---
--- export
--- zipImpl : SnocList c -> (a -> b -> c) -> List a -> List b -> ZipRes a b c
--- zipImpl sx f (x::xs) (y::ys) = zipImpl (sx :< f x y) f xs ys
--- zipImpl sx f [] [] = Z (sx <>> [])
--- zipImpl sx f xs [] = ZL xs (sx <>> [])
--- zipImpl sx f [] ys = ZR ys (sx <>> [])
+
+public export
+data ZipRes : (a,b,c : Type) -> Type where
+  ZB : List c -> ZipRes a b c
+  ZL : List a -> List c -> ZipRes a b c
+  ZR : List b -> List c -> ZipRes a b c
+
+export
+zipImpl : SnocList c -> (a -> b -> c) -> List a -> List b -> ZipRes a b c
+zipImpl sx f (x::xs) (y::ys) = zipImpl (sx :< f x y) f xs ys
+zipImpl sx f [] [] = ZB (sx <>> [])
+zipImpl sx f xs [] = ZL xs (sx <>> [])
+zipImpl sx f [] ys = ZR ys (sx <>> [])
+
+parameters (this : Stream f es (List o1))
+           (that : Stream f es (List o2))
+
+  zipWith_ :
+       (k1   : ZipWithLeft f es (List o1) (List o3))
+    -> (k2   : ZipWithLeft f es (List o2) (List o3))
+    -> (k3   : Stream f es (List o2) -> Stream f es (List o3))
+    -> (fun  : o1 -> o2 -> o3)
+    -> Stream f es (List o3)
+  zipWith_ k1 k2 k3 fun = do
+    Just l1 <- stepLeg this | Nothing => k3 that
+    Just l2 <- stepLeg that | Nothing => k1 l1.out l1.pull
+    go l1 l2
+
+    where
+      go : StepLeg f es (List o1) -> StepLeg f es (List o2) -> Stream f es (List o3)
+      go l1 l2 =
+        case zipImpl [<] fun l1.out l2.out of
+          ZB cs     => do
+            emit cs
+            Just l12 <- step l1 | Nothing => k3 l2.pull
+            Just l22 <- step l2 | Nothing => k1 l12.out l12.pull
+            assert_total $ go l12 l22
+          ZL as cs => do
+            emit cs
+            Just l22 <- step l2 | Nothing => k1 as l1.pull
+            assert_total $ go ({out := as} l1) l22
+          ZR bs cs => do
+            emit cs
+            Just l12 <- step l1 | Nothing => k2 bs l2.pull
+            assert_total $ go l12 ({out := bs} l2)
+
+  export
+  zipAllWith : (pad1 : o1) -> (pad2 : o2) -> (o1 -> o2 -> o3) -> Stream f es (List o3)
+  zipAllWith pad1 pad2 fun =
+   let kL := Chunk.mapOutput (`fun` pad2)
+       kR := Chunk.mapOutput (fun pad1)
+       k1 := \x,y => emit (map (`fun` pad2) x) >> kL y
+       k2 := \x,y => emit (map (fun pad1) x) >> kR y
+    in zipWith_ k1 k2 kR fun
+
+  export %inline
+  zipAll : (pad1 : o1) -> (pad2 : o2) -> Stream f es (List (o1,o2))
+  zipAll pad1 pad2 = zipAllWith pad1 pad2 MkPair
+
+  export %inline
+  zipWith : (o1 -> o2 -> o3) -> Stream f es (List o3)
+  zipWith = zipWith_ (\_,_ => pure ()) (\_,_ => pure ()) (\_ => pure ())
+
+  export %inline
+  zip : Stream f es (List (o1,o2))
+  zip = zipWith MkPair
+
+  export %inline
+  zipRight : Stream f es (List o2)
+  zipRight = zipWith (\_ => id)
+
+  export %inline
+  zipLeft : Stream f es (List o1)
+  zipLeft = zipWith const

@@ -4,6 +4,7 @@ import Data.Linear.Ref1
 import Data.List
 import Data.Maybe
 import Data.SnocList
+import FS
 
 import FS.Elin as E
 
@@ -147,7 +148,7 @@ prop_uncons_emit : Property
 prop_uncons_emit =
   property $ do
     v <- forAll bytes
-    res (map fst <$> uncons {q = Void} (emit v)) === succ (Right v) []
+    res (map fst <$> P.uncons {q = Void} (emit v)) === succ (Right v) []
 
 prop_uncons_rem : Property
 prop_uncons_rem =
@@ -227,6 +228,41 @@ prop_evalFoldGet =
     plus : Bits8 -> Bits8 -> Elin s es Bits8
     plus x y = pure $ x + y
 
+prop_zipWithChunk : Property
+prop_zipWithChunk =
+  property $ do
+    [vss,wss] <- forAll $ hlist [byteChunks,byteChunks]
+    res (bind emits (C.zipWith (emits vss) (emits wss) (+))) ===
+      out (zipWith (+) (join vss) (join wss))
+
+prop_zipAllWithChunk : Property
+prop_zipAllWithChunk =
+  property $ do
+    [v,w,vss,wss] <- forAll $ hlist [bytes,bytes,byteChunks,byteChunks]
+    let vs := join vss
+        ws := join wss
+        vall := vs ++ replicate (length ws `minus` length vs) v
+        wall := ws ++ replicate (length vs `minus` length ws) w
+    res (bind emits (C.zipAllWith (emits vss) (emits wss) v w (+))) ===
+      out (zipWith (+) vall wall)
+
+prop_zipWith : Property
+prop_zipWith =
+  property $ do
+    [vs,ws] <- forAll $ hlist [byteLists,byteLists]
+    res (P.zipWith (emits vs) (emits ws) (+)) === out (zipWith (+) vs ws)
+
+prop_zipAllWith : Property
+prop_zipAllWith =
+  property $ do
+    [v,w,vs,ws] <- forAll $ hlist [bytes,bytes,byteLists,byteLists]
+    let vall := vs ++ replicate (length ws `minus` length vs) v
+        wall := ws ++ replicate (length vs `minus` length ws) w
+    footnote "vall: \{show vall}"
+    footnote "wall: \{show wall}"
+    res (P.zipAllWith (emits vs) (emits ws) v w (+)) ===
+      out (zipWith (+) vall wall)
+
 --------------------------------------------------------------------------------
 -- Group
 --------------------------------------------------------------------------------
@@ -263,4 +299,8 @@ props =
     , ("prop_evalFold", prop_evalFold)
     , ("prop_evalFoldPair", prop_evalFoldPair)
     , ("prop_evalFoldGet", prop_evalFoldGet)
+    , ("prop_zipWithChunk", prop_zipWithChunk)
+    , ("prop_zipAllWithChunk", prop_zipAllWithChunk)
+    , ("prop_zipWith", prop_zipWith)
+    , ("prop_zipAllWith", prop_zipAllWith)
     ]
