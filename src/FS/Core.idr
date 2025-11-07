@@ -149,6 +149,7 @@ EmptyStream f es = Stream f es Void
 public export
 record StepLeg f es o where
   constructor SL
+  out   : o
   pull  : Pull f o es ()
   scope : Scope f
 

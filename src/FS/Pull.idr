@@ -685,3 +685,75 @@ attemptOutput p =
   att (mapOutput Right p) >>= \case
     Left x  => emit (Left x)
     Right _ => pure ()
+
+--------------------------------------------------------------------------------
+-- Zipping Streams
+--------------------------------------------------------------------------------
+
+export
+stepLeg : Stream f es o -> Pull f p es (Maybe $ StepLeg f es o)
+stepLeg x =
+  uncons x >>= \case
+    Left _        => pure Nothing
+    Right (v,rem) => map (Just . SL v rem) scope
+
+export
+step : StepLeg f es o -> Pull f p es (Maybe $ StepLeg f es o)
+step (SL _ p sc) = inScope sc (stepLeg p)
+
+public export
+0 ZipWithLeft :
+     (f : List Type -> Type -> Type)
+  -> List Type
+  -> (o,p : Type)
+  -> Type
+ZipWithLeft f es o p = o -> Stream f es o -> Stream f es p
+
+parameters (this : Stream f es o1)
+           (that : Stream f es o2)
+
+  zipWith_ :
+       (k1   : ZipWithLeft f es o1 o3)
+    -> (k3   : Stream f es o2 -> Stream f es o3)
+    -> (fun  : o1 -> o2 -> o3)
+    -> Stream f es o3
+  zipWith_ k1 k3 fun = do
+    Just l1 <- stepLeg this | Nothing => k3 that
+    Just l2 <- stepLeg that | Nothing => k1 l1.out l1.pull
+    go l1 l2
+
+    where
+      go : StepLeg f es o1 -> StepLeg f es o2 -> Stream f es o3
+      go l1 l2 = do
+        emit (fun l1.out l2.out)
+        Just l12 <- step l1 | Nothing => k3 l2.pull
+        Just l22 <- step l2 | Nothing => k1 l12.out l12.pull
+        assert_total $ go l12 l22
+
+  export
+  zipAllWith : (pad1 : o1) -> (pad2 : o2) -> (o1 -> o2 -> o3) -> Stream f es o3
+  zipAllWith pad1 pad2 fun =
+   let kL := mapOutput (`fun` pad2)
+       kR := mapOutput (fun pad1)
+       k1 := \x,y => emit (fun x pad2) >> kL y
+    in zipWith_ k1 kR fun
+
+  export %inline
+  zipAll : (pad1 : o1) -> (pad2 : o2) -> Stream f es (o1,o2)
+  zipAll pad1 pad2 = zipAllWith pad1 pad2 MkPair
+
+  export %inline
+  zipWith : (o1 -> o2 -> o3) -> Stream f es o3
+  zipWith = zipWith_ (\_,_ => pure ()) (\_ => pure ())
+
+  export %inline
+  zip : Stream f es (o1,o2)
+  zip = zipWith MkPair
+
+  export %inline
+  zipRight : Stream f es o2
+  zipRight = zipWith (\_ => id)
+
+  export %inline
+  zipLeft : Stream f es o1
+  zipLeft = zipWith const

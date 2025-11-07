@@ -7,6 +7,7 @@ import Test.FS.Concurrent
 import Test.FS.Internal
 import Test.FS.Pull
 import Test.FS.Resource
+import Test.FS.Zip
 
 main : IO ()
 main = do
@@ -16,6 +17,7 @@ main = do
       [ Concurrent.specs
       , Resource.specs
       , Bracket.specs
+      , Zip.specs
       ]
   test
     [ Internal.props
