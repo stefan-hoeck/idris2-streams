@@ -23,14 +23,14 @@ covering
 instrs : List (FlatSpecInstr e)
 instrs =
   [ "streams zipped with zipWith" `should` "abort once the first stream is exhausted" !:
-      assertOut Nat (P.zipWith s1 s2 (+))
+      assertOut Nat (P.zipWith (+) s1 s2)
         [12,13,13,14,14,14,15,15,15,15,16,17,17,17,17]
   , they `should` "allocate resources in the correct order" !:
-      assertAcquired Nat (P.zipWith s1 s2 (+)) [0,1,10,11,2,3,4,5,12]
+      assertAcquired Nat (P.zipWith (+) s1 s2) [0,1,10,11,2,3,4,5,12]
   , they `should` "release resources in the correct order" !:
-      assertReleased Nat (P.zipWith s1 s2 (+)) [1,2,3,4,11,5,0,12,10]
+      assertReleased Nat (P.zipWith (+) s1 s2) [1,2,3,4,11,5,0,12,10]
   , they `should` "produce events in the correct order" !:
-      assertEvents Nat (P.zipWith s1 s2 (+))
+      assertEvents Nat (P.zipWith (+) s1 s2)
         [ Alloc 0
         , Alloc 1
         , Alloc 10
