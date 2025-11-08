@@ -232,7 +232,7 @@ prop_zipWithChunk : Property
 prop_zipWithChunk =
   property $ do
     [vss,wss] <- forAll $ hlist [byteChunks,byteChunks]
-    res (bind emits (C.zipWith (emits vss) (emits wss) (+))) ===
+    res (bind emits (C.zipWith (+) (emits vss) (emits wss))) ===
       out (zipWith (+) (join vss) (join wss))
 
 prop_zipAllWithChunk : Property
@@ -243,14 +243,14 @@ prop_zipAllWithChunk =
         ws := join wss
         vall := vs ++ replicate (length ws `minus` length vs) v
         wall := ws ++ replicate (length vs `minus` length ws) w
-    res (bind emits (C.zipAllWith (emits vss) (emits wss) v w (+))) ===
+    res (bind emits (C.zipAllWith v w (+) (emits vss) (emits wss))) ===
       out (zipWith (+) vall wall)
 
 prop_zipWith : Property
 prop_zipWith =
   property $ do
     [vs,ws] <- forAll $ hlist [byteLists,byteLists]
-    res (P.zipWith (emits vs) (emits ws) (+)) === out (zipWith (+) vs ws)
+    res (P.zipWith (+) (emits vs) (emits ws)) === out (zipWith (+) vs ws)
 
 prop_zipAllWith : Property
 prop_zipAllWith =
@@ -260,7 +260,7 @@ prop_zipAllWith =
         wall := ws ++ replicate (length vs `minus` length ws) w
     footnote "vall: \{show vall}"
     footnote "wall: \{show wall}"
-    res (P.zipAllWith (emits vs) (emits ws) v w (+)) ===
+    res (P.zipAllWith v w (+) (emits vs) (emits ws)) ===
       out (zipWith (+) vall wall)
 
 --------------------------------------------------------------------------------
