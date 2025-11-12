@@ -49,7 +49,7 @@ the connection has been closed:
 covering
 serve : Socket AF_INET -> Async Poll [] ()
 serve cli = Prelude.do
-  (sc,_) <- newScope
+  sc <- newScope
   guarantee (tillFalse sc) (close' cli)
 
   where
