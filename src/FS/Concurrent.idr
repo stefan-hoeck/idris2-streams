@@ -68,6 +68,24 @@ timed dur v = do
     go : Clock Monotonic -> AsyncStream e es o
     go cl = assert_total $ atClock cl v >> go (addDuration cl dur)
 
+||| Emits the values from the given stream, each with a delay of the
+||| given duration.
+|||
+||| The first value will be emitted `after` the given delay.
+|||
+||| Note: If the given stream emits some values more slowly than specified
+|||       by the delays, irregular emission of several values at a time
+|||       might be observed.
+export
+every : TimerH e => Clock Duration -> AsyncStream e es a -> AsyncStream e es a
+every x = zipRight (timed x ())
+
+||| Like `every` but the first value will be emitted as soon as the
+||| original stream emits it.
+export
+every0 : TimerH e => Clock Duration -> AsyncStream e es a -> AsyncStream e es a
+every0 x = zipRight (cons () $ timed x ())
+
 --------------------------------------------------------------------------------
 -- Streams from Concurrency Primitives
 --------------------------------------------------------------------------------
@@ -419,3 +437,71 @@ switchMap f os = do
   guard <- semaphore 1
   ref   <- newref Nothing
   parJoin 2 (evalMap (\v => switchHalted (f v) guard ref) os)
+
+--------------------------------------------------------------------------------
+-- Hold
+--------------------------------------------------------------------------------
+
+public export
+record Hold e es o where
+  constructor H
+  cleanup : Async e [] ()
+  stream  : AsyncStream e es o
+
+||| Converts a discrete stream of values into a continuous one that will
+||| emit the last value emitted by the original stream on every pull starting
+||| with the given initial value.
+|||
+||| The original stream is immediately started and
+||| processed in the background, and
+|||
+||| This should be used in combination with a call to `bracket`, so
+||| that the stream running in the background is properly terminated
+||| once the resulting stream is exhausted.
+|||
+||| See `signalOn` for a usage example
+export
+hold :
+     Scope (Async e)
+  -> (ini : o)
+  -> AsyncStream e es o
+  -> Async e fs (Hold e es o)
+hold sc ini os = do
+  -- Signals the exhaustion of the output stream, which will cause the
+  -- input streams to be interrupted.
+  done <- deferredOf {s = World} ()
+
+  -- Signals the termination of the input streams. This will be set as
+  -- soon as the input stream throws an error or after the input
+  -- stream terminated successfully.
+  res  <- deferredOf {s = World} (Result es ())
+
+  ref <- newref ini
+
+  fbr <- assert_total $ foreach (writeref ref) os |> parrunCase sc done (putErr res)
+  pure $
+    H
+      (putDeferred done () >> wait fbr)
+      (interruptOn res (repeat (eval $ readref ref)))
+
+||| Like `hold` but the resulting stream will not emit a value
+||| until after the original stream first emitted a value.
+export
+hold1 : Scope (Async e) -> AsyncStream e es o -> Async e fs (Hold e es o)
+hold1 sc = map {stream $= mapMaybe id} . hold sc Nothing . mapOutput Just
+
+||| Runs the second stream in the background, emitting its latest
+||| output whenever the first stream emits.
+export
+signalOn : o -> AsyncStream e es () -> AsyncStream e es o -> AsyncStream e es o
+signalOn ini tick sig = do
+  sc <- scope
+  bracket (hold sc ini sig) cleanup (zipRight tick . stream)
+
+||| Like `signalOn` but only starts emitting values *after* the
+||| second stream emitted its first value.
+export
+signalOn1 : AsyncStream e es () -> AsyncStream e es o -> AsyncStream e es o
+signalOn1 tick sig = do
+  sc <- scope
+  bracket (hold1 sc sig) cleanup (zipRight tick . stream)

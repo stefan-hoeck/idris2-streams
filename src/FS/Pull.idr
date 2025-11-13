@@ -9,6 +9,7 @@ module FS.Pull
 
 import Control.Monad.MCancel
 import Control.Monad.Resource
+import Data.List
 import public FS.Core
 
 import Data.SnocList
@@ -116,6 +117,16 @@ export %inline
 consMaybe : Maybe o -> Pull f o es r -> Pull f o es r
 consMaybe (Just v) p = cons v p
 consMaybe Nothing  p = p
+
+0 cproof : NonEmpty (as ++ [a])
+cproof {as = []}   = %search
+cproof {as = _::_} = %search
+
+||| Infinitely cycles through the values in the given
+||| non-empty list.
+export
+cycle : (as : List a) -> (0 p : NonEmpty as) => Stream f es a
+cycle (v::vs) = assert_total $ emit v >> cycle (vs ++ [v]) @{cproof}
 
 --------------------------------------------------------------------------------
 -- Splitting Streams

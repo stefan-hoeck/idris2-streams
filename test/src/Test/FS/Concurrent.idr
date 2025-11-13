@@ -10,10 +10,28 @@ parameters {auto sr : Sink (Action Nat)}
   timedN : Nat -> Clock Duration -> AsyncStream e es Nat
   timedN x cl = bracket (Runner.alloc x) cleanup $ \n => timed cl n.val
 
+  timedNats : Nat -> Clock Duration -> AsyncStream e es Nat
+  timedNats x cl =
+    bracket (Runner.alloc x) cleanup $ \n => every cl (P.iterate (S Z) S)
+
+  heldNats : AsyncStream e [] Nat
+  heldNats =
+    timedNats 0 5.ms |> signalOn 0 (timed 3.ms ()) |> P.take 5
+
+  heldNats1 : AsyncStream e [] Nat
+  heldNats1 = timedNats 0 5.ms |> signalOn1 (timed 8.ms ()) |> P.take 4
+
+  heldNatsCont : AsyncStream e [] Nat
+  heldNatsCont =
+    timedNats 0 5.ms |> take 1 |> signalOn 0 (timed 3.ms ()) |> P.take 10
+
   errN : Nat -> Clock Duration -> AsyncStream e [String] Nat
   errN x cl =
     bracket (Runner.alloc x) cleanup $ \n =>
       P.take 5 (timed cl n.val) >> throw "Oops" >> timed cl n.val
+
+  heldNatsErr : AsyncStream e [String] Nat
+  heldNatsErr = errN 0 5.ms |> signalOn 0 (timed 3.ms ())
 
   mergeSucc : AsyncStream e [] Nat
   mergeSucc = merge [timedN 1 10.ms, timedN 2 20.ms, timedN 3 30.ms]
@@ -200,6 +218,30 @@ instrs =
 
   , it `should` "cleanup all allocated resources after an inner stream failed" !:
       assertReleasedAll Nat (switchMap switchInnerErr switchOuter)
+
+  , "a stream created with hold" `should` "continuously emit the last value from the original stream" !:
+      assertOut Nat heldNats [0,1,1,2,2]
+
+  , it `should` "allocate all required resources" !:
+      assertAcquired Nat heldNats [0]
+
+  , it `should` "release all allocated resources" !:
+      assertReleased Nat heldNats [0]
+
+  , it `should` "fail with  an error if the inner stream fails" !:
+      assertErr Nat heldNatsErr "Oops"
+
+  , it `should` "release all allocated resources after failing with an error" !:
+      assertReleased Nat heldNatsErr [0]
+
+  , it `should` "continue emitting events after the inner stream is exhausted" !:
+      assertOut Nat heldNatsCont [0,1,1,1,1,1,1,1,1,1]
+
+  , it `should` "release resources after the inner stream is exhausted" !:
+      assertEvents Nat heldNatsCont [Alloc 0, Out 0, Release 0, Out 1,Out 1,Out 1,Out 1,Out 1,Out 1,Out 1,Out 1,Out 1]
+
+  , "a stream created with hold1" `should` "continuously emit the last value from the original stream" !:
+      assertOut Nat heldNats1 [1,3,4,6]
   ]
 
 export covering
