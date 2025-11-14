@@ -24,18 +24,18 @@ putErr def _         = pure ()
 ||| This is a low-level utility used to implement the combinators in this
 ||| module. It is exported, because it might be useful when
 ||| implementing other combinators,
-export covering
+export
 parrunCase :
-     (sc      : Scope (Async e))
-  -> (check   : Deferred World a)
+     (check   : Deferred World a)
   -> (finally : Outcome fs () -> Async e [] ())
   -> EmptyStream (Async e) fs
   -> Async e es (Fiber [] ())
-parrunCase sc check finally p = do
-  start $ ignore $ guaranteeCase (pullIn sc $ interruptOnAny check p) $ \case
-    Succeeded res => finally res
-    Canceled      => finally Canceled
-    Error err impossible
+parrunCase check finally p =
+  assert_total $ start $ ignore $
+    guaranteeCase (pull $ interruptOnAny check p) $ \case
+      Succeeded res => finally res
+      Canceled      => finally Canceled
+      Error err impossible
 
 ||| Concurrently runs the given stream until it either terminates or
 ||| is interrupted by `check`.
@@ -43,11 +43,10 @@ parrunCase sc check finally p = do
 ||| This is a low-level utility used to implement the combinators in this
 ||| module. It is exported, because it might be useful when
 ||| implementing other combinators,
-export covering %inline
+export %inline
 parrun :
-     (sc      : Scope (Async e))
-  -> (check   : Deferred World a)
+     (check   : Deferred World a)
   -> (finally : Async e [] ())
   -> EmptyStream (Async e) fs
   -> Async e es (Fiber [] ())
-parrun sc check = parrunCase sc check . const
+parrun check = parrunCase check . const

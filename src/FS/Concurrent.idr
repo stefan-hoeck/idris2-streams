@@ -125,7 +125,6 @@ parameters (chnl : Channel o)
            (done : Deferred World ())
            (res  : Deferred World (Result es ()))
            (sema : IORef Nat)
-           (sc   : Scope (Async e))
 
   -- Handles the outcome of running one of the input streams.
   -- in case the stream terminated with an error, `res` is immediately
@@ -142,19 +141,17 @@ parameters (chnl : Channel o)
   -- the corresponding fiber. Running `s` is interrupted if
   -- the output stream is exhausted and `done` is completed.
   -- The running input stream writes all chunks of output to the channel.
-  covering
   child : AsyncStream e es o -> Async e es (Fiber [] ())
-  child s = foreach (ignore . send chnl) s |> parrunCase sc done out
+  child s = foreach (ignore . send chnl) s |> parrunCase done out
 
   -- Starts running all input streams in parallel, and reads chunks of
   -- output from the bounded queue `que`.
   merged : List (AsyncStream e es o) -> AsyncStream e es o
   merged ss =
-    assert_total $
-      bracket
-        (traverse child ss)
-        (\fs => putDeferred done () >> traverse_ wait fs)
-        (\_  => interruptOn res (receive chnl))
+    bracket
+      (traverse child ss)
+      (\fs => putDeferred done () >> traverse_ wait fs)
+      (\_  => interruptOn res (receive chnl))
 
 ||| Runs the given streams in parallel and nondeterministically
 ||| (but chunkc-wise) interleaves their output.
@@ -168,7 +165,6 @@ merge : List (AsyncStream e es o) -> AsyncStream e es o
 merge []  = neutral
 merge [s] = s
 merge ss  = Prelude.do
-  sc <- scope
   -- A bounded queue where the running streams will write their output
   -- to. There will be no buffering: evaluating the streams will block
   -- until then next chunk of ouptut has been requested by the consumer.
@@ -187,7 +183,7 @@ merge ss  = Prelude.do
   -- that are still running.
   sema <- newref (length ss)
 
-  merged chnl done res sema sc ss
+  merged chnl done res sema ss
 
 ||| Runs the given streams in parallel and nondeterministically interleaves
 ||| their output.
@@ -221,7 +217,6 @@ parameters (done      : Deferred World (Result es ()))
            (running   : SignalRef Nat)
            (output    : Channel o)
            (leaseref  : Ref World (Maybe $ Async e [] ()))
-           (sc        : Scope (Async e))
 
 
   doLease : Scope (Async e) -> Async e es ()
@@ -254,7 +249,7 @@ parameters (done      : Deferred World (Result es ()))
     uncancelable $ \poll => do
       poll (acquire available) -- wait for a fiber to become available
       modify running S         -- increase the number of running fibers
-      poll $ ignore $ parrunCase sc
+      poll $ ignore $ parrunCase
         done
         (\o => putErr done o >> decRunning >> release available)
         (foreach (ignore . send output) s)
@@ -264,7 +259,7 @@ parameters (done      : Deferred World (Result es ()))
   -- The stream is interrupted as soon as the `done` flag is set.
   outer : AsyncStream e es (AsyncStream e es o) -> Async e es (Fiber [] ())
   outer ss =
-    assert_total $ parrunCase sc
+    parrunCase
       done
       (\o => putErr done o >> decRunning >> until running (== 0) >> doUnlease) $
         flatMap ss $ \v => do
@@ -300,8 +295,6 @@ parJoin :
   -> AsyncStream e es o
 parJoin 1       out = flatMap out id
 parJoin maxOpen out = do
-  sc <- scope
-
   leaseref  <- newref {a = Maybe (Async e [] ())} Nothing
 
   -- Signals exhaustion of the output stream (for instance, due
@@ -319,7 +312,7 @@ parJoin maxOpen out = do
   -- closed when the last child was exhausted.
   output    <- channelOf o 0
 
-  fbr       <- exec $ outer done available running output leaseref sc out
+  fbr       <- exec $ outer done available running output leaseref out
 
   -- The resulting stream should cleanup resources when it is done.
   -- It should also finalize `done`.
@@ -445,28 +438,40 @@ switchMap f os = do
 public export
 record Hold e es o where
   constructor H
-  cleanup : Async e [] ()
+  release : Async e [] ()
   stream  : AsyncStream e es o
+
+export %inline
+Resource (Async e) (Hold e es o) where
+  cleanup = release
 
 ||| Converts a discrete stream of values into a continuous one that will
 ||| emit the last value emitted by the original stream on every pull starting
 ||| with the given initial value.
 |||
 ||| The original stream is immediately started and
-||| processed in the background, and
+||| processed in the background.
 |||
-||| This should be used in combination with a call to `bracket`, so
-||| that the stream running in the background is properly terminated
+||| This should be used in combination with a call to `bracket` or
+||| `resource`, so that the stream running in the background is
+||| properly terminated and its resources released
 ||| once the resulting stream is exhausted.
 |||
-||| See `signalOn` for a usage example
+||| ```idris example
+||| signalOn :
+|||     o
+|||  -> AsyncStream e es ()
+|||  -> AsyncStream e es o
+|||  -> AsyncStream e es o
+||| signalOn ini tick sig =
+|||   resource (hold ini sig) (zipRight tick . stream)
+||| ```
 export
 hold :
-     Scope (Async e)
-  -> (ini : o)
+     (ini : o)
   -> AsyncStream e es o
   -> Async e fs (Hold e es o)
-hold sc ini os = do
+hold ini os = do
   -- Signals the exhaustion of the output stream, which will cause the
   -- input streams to be interrupted.
   done <- deferredOf {s = World} ()
@@ -478,7 +483,7 @@ hold sc ini os = do
 
   ref <- newref ini
 
-  fbr <- assert_total $ foreach (writeref ref) os |> parrunCase sc done (putErr res)
+  fbr <- foreach (writeref ref) os |> parrunCase done (putErr res)
   pure $
     H
       (putDeferred done () >> wait fbr)
@@ -487,21 +492,17 @@ hold sc ini os = do
 ||| Like `hold` but the resulting stream will not emit a value
 ||| until after the original stream first emitted a value.
 export
-hold1 : Scope (Async e) -> AsyncStream e es o -> Async e fs (Hold e es o)
-hold1 sc = map {stream $= mapMaybe id} . hold sc Nothing . mapOutput Just
+hold1 : AsyncStream e es o -> Async e fs (Hold e es o)
+hold1 = map {stream $= mapMaybe id} . hold Nothing . mapOutput Just
 
 ||| Runs the second stream in the background, emitting its latest
 ||| output whenever the first stream emits.
 export
 signalOn : o -> AsyncStream e es () -> AsyncStream e es o -> AsyncStream e es o
-signalOn ini tick sig = do
-  sc <- scope
-  bracket (hold sc ini sig) cleanup (zipRight tick . stream)
+signalOn ini tick sig = resource (hold ini sig) (zipRight tick . stream)
 
 ||| Like `signalOn` but only starts emitting values *after* the
 ||| second stream emitted its first value.
 export
 signalOn1 : AsyncStream e es () -> AsyncStream e es o -> AsyncStream e es o
-signalOn1 tick sig = do
-  sc <- scope
-  bracket (hold1 sc sig) cleanup (zipRight tick . stream)
+signalOn1 tick sig = resource (hold1 sig) (zipRight tick . stream)
