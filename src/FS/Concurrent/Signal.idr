@@ -136,6 +136,6 @@ discrete s = unfoldEval 0 (map (uncurry More). next s)
 
 ||| Blocks the fiber and observes the given signal until the given
 ||| predicate returns `True`.
-export covering
+export
 until : SignalRef a -> (a -> Bool) -> Async e [] ()
-until ref pred = discrete ref |> any pred |> drain |> mpull
+until ref pred = assert_total $ discrete ref |> any pred |> drain |> mpull
