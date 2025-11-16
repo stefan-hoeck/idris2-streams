@@ -10,4 +10,5 @@ executable = "streams-docs"
 modules    = README
            , Concurrent
            , HTTP
+           , HTTP11
 main       = README
