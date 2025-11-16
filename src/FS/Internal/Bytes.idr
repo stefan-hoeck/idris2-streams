@@ -8,11 +8,6 @@ import Derive.Prelude
 %default total
 %language ElabReflection
 
-export
-nonEmpty : ByteString -> Maybe ByteString
-nonEmpty (BS 0 _) = Nothing
-nonEmpty bs       = Just bs
-
 public export
 0 SnocBytes : Type
 SnocBytes = SnocList ByteString
