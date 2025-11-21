@@ -617,6 +617,11 @@ export %inline
 scans1 : p -> (p -> o -> p) -> Pull f o es r -> Pull f p es r
 scans1 vp fun = scan vp $ \vp1,vo => let vp2 := fun vp1 vo in (vp2,vp2)
 
+||| Like `scans` but the running total is including the current element.
+export %inline
+scanFrom : o -> Pull f (o -> o) es r -> Pull f o es r
+scanFrom vo = scans1 vo (\x,f => f x)
+
 ||| Emits the count of each element.
 export %inline
 runningCount : Pull f o es r -> Pull f Nat es r
