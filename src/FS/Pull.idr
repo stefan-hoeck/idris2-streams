@@ -613,14 +613,22 @@ scans : p -> (p -> o -> p) -> Pull f o es r -> Pull f p es r
 scans vp fun = scan vp $ \vp1,vo => let vp2 := fun vp1 vo in (vp1,vp2)
 
 ||| Like `scans` but the running total is including the current element.
+|||
+||| Emits the initial value as its first output.
 export %inline
 scans1 : p -> (p -> o -> p) -> Pull f o es r -> Pull f p es r
-scans1 vp fun = scan vp $ \vp1,vo => let vp2 := fun vp1 vo in (vp2,vp2)
+scans1 vp fun os =
+  cons vp $ scan vp (\vp1,vo => let vp2 := fun vp1 vo in (vp2,vp2)) os
 
-||| Like `scans` but the running total is including the current element.
+||| Like `scans` but specialized to a pull of unary functions.
 export %inline
 scanFrom : o -> Pull f (o -> o) es r -> Pull f o es r
-scanFrom vo = scans1 vo (\x,f => f x)
+scanFrom vo = scans vo (\x,f => f x)
+
+||| Like `scans1` but specialized to a pull of unary functions.
+export %inline
+scanFrom1 : o -> Pull f (o -> o) es r -> Pull f o es r
+scanFrom1 vo = scans1 vo (\x,f => f x)
 
 ||| Emits the count of each element.
 export %inline
