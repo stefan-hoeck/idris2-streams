@@ -54,6 +54,11 @@ export
 signal : Lift1 World f => a -> f (SignalRef a)
 signal v = SR <$> newref (S v 1 [])
 
+||| An observable, mutable reference that initially holds no value.
+export %inline
+emptySignal : Lift1 World f => (0 a : Type) -> f (SignalRef $ Maybe a)
+emptySignal _ = signal Nothing
+
 ||| Reads the current value of the signal.
 export %inline
 get : Lift1 World f => SignalRef a -> f a
@@ -133,6 +138,13 @@ continuous = repeat . eval . get
 export %inline
 discrete : SignalRef a -> Pull (Async e) a es ()
 discrete s = unfoldEval 0 (map (uncurry More). next s)
+
+||| Like `discrete` but for an initially empty signal.
+|||
+||| Fires whenever a `Just` is put into the signal.
+export %inline
+justs : SignalRef (Maybe a) -> Pull (Async e) a es ()
+justs s = discrete s |> mapMaybe id
 
 ||| Blocks the fiber and observes the given signal until the given
 ||| predicate returns `True`.
