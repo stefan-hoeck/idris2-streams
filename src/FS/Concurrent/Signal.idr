@@ -144,7 +144,7 @@ discrete s = unfoldEval 0 (map (uncurry More). next s)
 ||| Fires whenever a `Just` is put into the signal.
 export %inline
 justs : SignalRef (Maybe a) -> Pull (Async e) a es ()
-justs s = discrete s |> mapMaybe id
+justs s = discrete s |> catMaybes
 
 ||| Blocks the fiber and observes the given signal until the given
 ||| predicate returns `True`.
