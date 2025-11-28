@@ -15,6 +15,7 @@ import public FS.Core
 import Data.SnocList
 
 %default total
+%hide Data.Linear.(.)
 
 --------------------------------------------------------------------------------
 -- Creating Pulls
@@ -334,6 +335,11 @@ mapMaybe f p =
       Just w  => cons w (mapMaybe f q)
       Nothing => mapMaybe f q
 
+||| Emits a values wrapped in a `Just` from the initial stream.
+export %inline
+catMaybes : Pull f (Maybe o) es r -> Pull f o es r
+catMaybes = mapMaybe id
+
 ||| Chunk-wise maps the emit of a `Pull`
 export %inline
 mapOutput : (o -> p) -> Pull f o es r -> Pull f p es r
@@ -555,6 +561,15 @@ scan s1 f p =
   assert_total $ uncons p >>= \case
     Left res    => pure res
     Right (v,q) => let (w,s2) := f s1 v in cons w (scan s2 f q)
+
+||| Emits values of the original pull, but emits consecutive
+||| identical values only once.
+export
+distinct : Eq o => Pull f o es r -> Pull f o es r
+distinct = catMaybes . scan Nothing next
+  where
+    next : Maybe o -> o -> (Maybe o, Maybe o)
+    next m v = if m == Just v then (Nothing,m) else (Just v, Just v)
 
 ||| General stateful conversion of a `Pull`s emit.
 |||

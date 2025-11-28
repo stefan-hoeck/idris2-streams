@@ -493,7 +493,7 @@ hold ini os = do
 ||| until after the original stream first emitted a value.
 export
 hold1 : AsyncStream e es o -> Async e fs (Hold e es o)
-hold1 = map {stream $= mapMaybe id} . hold Nothing . mapOutput Just
+hold1 = map {stream $= catMaybes} . hold Nothing . mapOutput Just
 
 ||| Runs the second stream in the background, emitting its latest
 ||| output whenever the first stream emits.

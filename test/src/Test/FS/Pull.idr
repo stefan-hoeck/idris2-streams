@@ -263,6 +263,20 @@ prop_zipAllWith =
     res (P.zipAllWith v w (+) (emits vs) (emits ws)) ===
       out (zipWith (+) vall wall)
 
+distinctVals : Eq a => List a -> List a
+distinctVals []        = []
+distinctVals (x :: xs) = go [<x] x xs
+  where
+    go : SnocList a -> a -> List a -> List a
+    go sx v []      = sx <>> []
+    go sx v (x::xs) = if v == x then go sx v xs else go (sx:<x) x xs
+
+prop_distinct : Property
+prop_distinct =
+  property $ do
+    bss <- forAll byteChunks
+    res (distinct $ bind emits $ emits bss) === out (distinctVals $ concat bss)
+
 --------------------------------------------------------------------------------
 -- Group
 --------------------------------------------------------------------------------
@@ -303,4 +317,5 @@ props =
     , ("prop_zipAllWithChunk", prop_zipAllWithChunk)
     , ("prop_zipWith", prop_zipWith)
     , ("prop_zipAllWith", prop_zipAllWith)
+    , ("prop_distinct", prop_distinct)
     ]
