@@ -3,6 +3,7 @@ module FS.Concurrent.Signal
 import Data.Linear.Deferred
 import Data.Linear.Ref1
 import Data.Linear.Traverse1
+import Data.List.Quantifiers.Extra
 
 import FS.Pull
 
@@ -176,4 +177,40 @@ parameters {0 f      : List Type -> Type -> Type}
   ||| value in a signal.
   export
   observeSig : (o -> p -> f es ()) -> Pull f o es r -> Pull f o es r
-  observeSig f = observe (\vo => get sig >>= f vo)
+  observeSig f = observe $ \vo => get sig >>= f vo
+
+  ||| Like `observeSig` but drains the stream in the process.
+  export
+  foreachSig : (o -> p -> f es ()) -> Pull f o es r -> Pull f q es r
+  foreachSig f = foreach $ \vo => get sig >>= f vo
+
+||| Generalization of `observeSig`: Acts on the output of a pull by combining
+||| with the values from a heterogeneous list of signals.
+export
+hobserveSig :
+     {0 f      : List Type -> Type -> Type}
+  -> {0 es,ts  : List Type}
+  -> {auto lio : LIO (f es)}
+  -> All SignalRef ts
+  -> HZipFun (o::ts) (f es ())
+  -> Pull f o es r
+  -> Pull f o es r
+hobserveSig sigs fun =
+  observe $ \vo => Prelude.do
+    vs <- hsequence $ mapProperty get sigs
+    happly fun (vo::vs)
+
+||| Like `hobserveSig` but drains the stream in the process.
+export
+hforeachSig :
+     {0 f      : List Type -> Type -> Type}
+  -> {0 es,ts  : List Type}
+  -> {auto lio : LIO (f es)}
+  -> All SignalRef ts
+  -> HZipFun (o::ts) (f es ())
+  -> Pull f o es r
+  -> Pull f o es r
+hforeachSig sigs fun =
+  foreach $ \vo => Prelude.do
+    vs <- hsequence $ mapProperty get sigs
+    happly fun (vo::vs)
