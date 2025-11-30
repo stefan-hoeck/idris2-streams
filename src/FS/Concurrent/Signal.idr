@@ -151,3 +151,29 @@ justs s = discrete s |> catMaybes
 export
 until : SignalRef a -> (a -> Bool) -> Async e [] ()
 until ref pred = assert_total $ discrete ref |> any pred |> drain |> mpull
+
+--------------------------------------------------------------------------------
+-- Writing from Streams to Signals
+--------------------------------------------------------------------------------
+
+parameters {0 f      : List Type -> Type -> Type}
+           {0 es     : List Type}
+           {0 p,r    : Type}
+           {auto lio : LIO (f es)}
+           (sig      : SignalRef p)
+
+  ||| Use the output of a pull to update the value in a signal.
+  export
+  modSig : (o -> p -> p) -> Pull f o es r -> Pull f o es r
+  modSig f = observe (modify sig . f)
+
+  ||| Use the output of a pull to update the value in a signal.
+  export
+  setSig : Pull f p es r -> Pull f p es r
+  setSig = observe (put sig)
+
+  ||| Act on the output of a pull by combining it with the current
+  ||| value in a signal.
+  export
+  observeSig : (o -> p -> f es ()) -> Pull f o es r -> Pull f o es r
+  observeSig f = observe (\vo => get sig >>= f vo)

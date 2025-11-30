@@ -9,6 +9,7 @@ module FS.Pull
 
 import Control.Monad.MCancel
 import Control.Monad.Resource
+import Data.Either
 import Data.List
 import public FS.Core
 
@@ -339,6 +340,26 @@ mapMaybe f p =
 export %inline
 catMaybes : Pull f (Maybe o) es r -> Pull f o es r
 catMaybes = mapMaybe id
+
+||| Emits the values, for which the given function returns a `Right`.
+export
+mapRight : (o -> Either e p) -> Pull f o es r -> Pull f p es r
+mapRight f = mapMaybe (getRight . f)
+
+||| Emits the values wrapped `Rights`.
+export %inline
+catRights : Pull f (Either e o) es r -> Pull f o es r
+catRights = mapMaybe getRight
+
+||| Emits the values, for which the given function returns a `Right`.
+export
+mapLeft : (o -> Either e p) -> Pull f o es r -> Pull f e es r
+mapLeft f = mapMaybe (getLeft . f)
+
+||| Emits the values wrapped `Rights`.
+export %inline
+catLefts : Pull f (Either e o) es r -> Pull f e es r
+catLefts = mapMaybe getLeft
 
 ||| Chunk-wise maps the emit of a `Pull`
 export %inline
