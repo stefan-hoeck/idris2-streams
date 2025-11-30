@@ -11,6 +11,7 @@ import Control.Monad.MCancel
 import Control.Monad.Resource
 import Data.Either
 import Data.List
+import Data.List.Quantifiers
 import public FS.Core
 
 import Data.SnocList
@@ -845,3 +846,27 @@ zipRight = zipWith (\_ => id)
 export %inline
 zipLeft : Stream f es o1 -> Stream f es o2 -> Stream f es o1
 zipLeft = zipWith const
+
+||| Zips the values in a heterogeneous list of streams.
+export
+hzip : All (Stream f es) ts -> Stream f es (HList ts)
+hzip []        = fill []
+hzip [s]       = mapOutput (::Nil) s
+hzip (s :: ss) = zipWith (::) s (hzip ss)
+
+public export
+0 HZipFun : List Type -> Type -> Type
+HZipFun []        r = r
+HZipFun (t :: ts) r = t -> HZipFun ts r
+
+export
+happly : HZipFun ts r -> HList ts -> r
+happly fun []        = fun
+happly fun (v :: vs) = happly (fun v) vs
+
+||| Zips the given streams applying the resulting heterogeneous
+||| lists of values to the given function.
+export
+hzipWith : HZipFun ts r -> All (Stream f es) ts -> Stream f es r
+hzipWith fun = mapOutput (happly fun) . hzip
+
