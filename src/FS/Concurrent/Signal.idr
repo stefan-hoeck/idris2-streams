@@ -47,6 +47,7 @@ nextImpl poll last once st@(S v lst ls) =
 
 export
 record SignalRef a where
+  [noHints]
   constructor SR
   ref : Ref World (ST a)
 
@@ -135,45 +136,58 @@ next (SR ref) n = do
 ||| as a data sink.
 export
 record Signal a where
+  [noHints]
   constructor SI
   sref : SignalRef a
+
+export %inline %hint
+ref2sig : SignalRef a => Signal a
+ref2sig @{r} = SI r
 
 export %inline
 sig : SignalRef a -> Signal a
 sig = SI
 
 public export
-interface Continuous (0 f : Type -> Type) where
-  ||| Creates a continuous stream of values typically by reading
-  ||| the current state of a mutable reference every time a value is
-  ||| pulled.
-  continuous : f a -> Stream (Async e) es a
+interface Reference (0 t : Type -> Type) where
+  current1 : t a -> IO1 a
 
 export %inline
-Continuous IORef where
-  continuous = repeat . eval . readref
+current : LIO f => Reference t => t a -> f a
+current = lift1 . current1
+
+||| Creates a continuous stream of values typically by reading
+||| the current state of a mutable reference every time a value is
+||| pulled.
+export
+continuous : LIO (f es) => Reference t => t a -> Stream f es a
+continuous = repeat . eval . current
 
 export %inline
-Continuous SignalRef where
-  continuous = repeat . eval . get
+Reference IORef where
+  current1 = read1
 
 export %inline
-Continuous Signal where
-  continuous = continuous . sref
+Reference SignalRef where
+  current1 = ioToF1 . get
+
+export %inline
+Reference Signal where
+  current1 = current1 . sref
 
 public export
-interface Discrete (0 f : Type -> Type) where
+interface Discrete (0 t : Type -> Type) where
   ||| Creates a discrete stream of values that reads an observable
   ||| value every time it changes.
   |||
   ||| Note: There is no buffering of values. If the signal is updated
   |||       more quickly than the stream is being pulled, some values
   |||       might be lost.
-  discrete : f a -> Stream (Async e) es a
+  discrete : t a -> Stream (Async e) es a
 
 export
 Discrete SignalRef where
-  discrete s = unfoldEval 0 (map (uncurry More). next s)
+  discrete s = unfoldEval 0 (map (uncurry More) . next s)
 
 export %inline
 Discrete Signal where
@@ -183,7 +197,7 @@ Discrete Signal where
 |||
 ||| Fires whenever a `Just` is put into the signal.
 export %inline
-justs : Discrete f => f (Maybe a) -> Stream (Async e) es a
+justs : Discrete t => t (Maybe a) -> Stream (Async e) es a
 justs s = discrete s |> catMaybes
 
 ||| Blocks the fiber and observes the given signal until the given
@@ -236,7 +250,7 @@ hobserveSig :
   -> Pull f o es r
 hobserveSig sigs fun =
   observe $ \vo => Prelude.do
-    vs <- hsequence $ mapProperty (get . sref) sigs
+    vs <- hsequence $ mapProperty current sigs
     happly fun (vo::vs)
 
 ||| Like `hobserveSig` but drains the stream in the process.
@@ -251,5 +265,5 @@ hforeachSig :
   -> Pull f q es r
 hforeachSig sigs fun =
   foreach $ \vo => Prelude.do
-    vs <- hsequence $ mapProperty (get . sref) sigs
+    vs <- hsequence $ mapProperty current sigs
     happly fun (vo::vs)
