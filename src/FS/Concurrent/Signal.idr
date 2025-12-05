@@ -248,7 +248,7 @@ hforeachSig :
   -> All Signal ts
   -> HZipFun (o::ts) (f es ())
   -> Pull f o es r
-  -> Pull f o es r
+  -> Pull f q es r
 hforeachSig sigs fun =
   foreach $ \vo => Prelude.do
     vs <- hsequence $ mapProperty (get . sref) sigs
