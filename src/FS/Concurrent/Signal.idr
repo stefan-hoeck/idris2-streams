@@ -45,7 +45,7 @@ nextImpl poll last once st@(S v lst ls) =
     False => (st, pure (v,lst))
     True  => (S v lst (once :: ls), poll (awaitOnce once))
 
-public export
+export
 record SignalRef a where
   constructor SR
   ref : Ref World (ST a)
@@ -124,33 +124,72 @@ next (SR ref) n = do
     act <- update ref (nextImpl poll n def)
     act
 
-||| Creates a continuous stream of values that reads the current
-||| value every time a value is pulled from the stream.
-export %inline
-continuous : SignalRef a -> Pull (Async e) a es ()
-continuous = repeat . eval . get
+--------------------------------------------------------------------------------
+-- Signal Streams
+--------------------------------------------------------------------------------
 
-||| Creates a discrete stream of values that reads the current
-||| value every time it changes.
+||| An observe-only wrapper around a `SignalRef`.
 |||
-||| Note: There is no buffering of values. If the signal is updated
-|||       more quickly than the stream is being pulled, some values
-|||       might be lost.
+||| Use this if you still want to observe a mutable value by means of
+||| `discrete` or `continuous` but you want to prevent it to be further used
+||| as a data sink.
+export
+record Signal a where
+  constructor SI
+  sref : SignalRef a
+
 export %inline
-discrete : SignalRef a -> Pull (Async e) a es ()
-discrete s = unfoldEval 0 (map (uncurry More). next s)
+sig : SignalRef a -> Signal a
+sig = SI
+
+public export
+interface Continuous (0 f : Type -> Type) where
+  ||| Creates a continuous stream of values typically by reading
+  ||| the current state of a mutable reference every time a value is
+  ||| pulled.
+  continuous : f a -> Stream (Async e) es a
+
+export %inline
+Continuous IORef where
+  continuous = repeat . eval . readref
+
+export %inline
+Continuous SignalRef where
+  continuous = repeat . eval . get
+
+export %inline
+Continuous Signal where
+  continuous = continuous . sref
+
+public export
+interface Discrete (0 f : Type -> Type) where
+  ||| Creates a discrete stream of values that reads an observable
+  ||| value every time it changes.
+  |||
+  ||| Note: There is no buffering of values. If the signal is updated
+  |||       more quickly than the stream is being pulled, some values
+  |||       might be lost.
+  discrete : f a -> Stream (Async e) es a
+
+export
+Discrete SignalRef where
+  discrete s = unfoldEval 0 (map (uncurry More). next s)
+
+export %inline
+Discrete Signal where
+  discrete = discrete . sref
 
 ||| Like `discrete` but for an initially empty signal.
 |||
 ||| Fires whenever a `Just` is put into the signal.
 export %inline
-justs : SignalRef (Maybe a) -> Pull (Async e) a es ()
+justs : Discrete f => f (Maybe a) -> Stream (Async e) es a
 justs s = discrete s |> catMaybes
 
 ||| Blocks the fiber and observes the given signal until the given
 ||| predicate returns `True`.
 export
-until : SignalRef a -> (a -> Bool) -> Async e [] ()
+until : Discrete f => f a -> (a -> Bool) -> Async e [] ()
 until ref pred = assert_total $ discrete ref |> any pred |> drain |> mpull
 
 --------------------------------------------------------------------------------
@@ -191,13 +230,13 @@ hobserveSig :
      {0 f      : List Type -> Type -> Type}
   -> {0 es,ts  : List Type}
   -> {auto lio : LIO (f es)}
-  -> All SignalRef ts
+  -> All Signal ts
   -> HZipFun (o::ts) (f es ())
   -> Pull f o es r
   -> Pull f o es r
 hobserveSig sigs fun =
   observe $ \vo => Prelude.do
-    vs <- hsequence $ mapProperty get sigs
+    vs <- hsequence $ mapProperty (get . sref) sigs
     happly fun (vo::vs)
 
 ||| Like `hobserveSig` but drains the stream in the process.
@@ -206,11 +245,11 @@ hforeachSig :
      {0 f      : List Type -> Type -> Type}
   -> {0 es,ts  : List Type}
   -> {auto lio : LIO (f es)}
-  -> All SignalRef ts
+  -> All Signal ts
   -> HZipFun (o::ts) (f es ())
   -> Pull f o es r
   -> Pull f o es r
 hforeachSig sigs fun =
   foreach $ \vo => Prelude.do
-    vs <- hsequence $ mapProperty get sigs
+    vs <- hsequence $ mapProperty (get . sref) sigs
     happly fun (vo::vs)
