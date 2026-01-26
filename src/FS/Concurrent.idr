@@ -21,6 +21,7 @@ import FS.Scope
 
 import IO.Async.BQueue
 import IO.Async.Channel
+import IO.Async.Logging
 import IO.Async.Loop.TimerH
 import IO.Async.Semaphore
 
@@ -506,3 +507,27 @@ signalOn ini tick sig = resource (hold ini sig) (zipRight tick . stream)
 export
 signalOn1 : AsyncStream e es () -> AsyncStream e es o -> AsyncStream e es o
 signalOn1 tick sig = resource (hold1 sig) (zipRight tick . stream)
+
+--------------------------------------------------------------------------------
+-- Logging Utils
+--------------------------------------------------------------------------------
+
+parameters {0 es     : List Type}
+           {auto lgs : All Loggable es}
+           {auto log : Logger e}
+
+  export
+  logExec : (dflt : t) -> Async e es t -> Pull (Async e) o [] t
+  logExec dflt = exec . unerr dflt
+
+  export %inline
+  tryExec : Async e es t -> Pull (Async e) o [] (Maybe t)
+  tryExec = logExec Nothing . map Just
+
+  export
+  tryPull : (dflt : r) -> Pull (Async e) o es r -> Pull (Async e) o [] r
+  tryPull dflt = handle (mapProperty (\_,v => exec (logLoggable v $> dflt)) lgs)
+
+  export %inline
+  tryStream : Stream (Async e) es o -> Stream (Async e) [] o
+  tryStream = tryPull ()
