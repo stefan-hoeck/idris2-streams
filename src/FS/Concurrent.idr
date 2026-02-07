@@ -320,6 +320,16 @@ parJoin maxOpen out = do
     (putDeferred done (Right ()) >> wait fbr)
     (interruptOn done (receive output))
 
+||| Convenience alias for `P.mapOutput inner outer |> parJoin maxOpen`
+export %inline
+parBind :
+     (maxOpen    : Nat)
+  -> {auto 0 prf : IsSucc maxOpen}
+  -> (inner      : o -> AsyncStream e es p)
+  -> (outer      : AsyncStream e es o)
+  -> AsyncStream e es p
+parBind mo i o = mapOutput i o |> parJoin mo
+
 export
 broadcast :
      AsyncStream e es o
