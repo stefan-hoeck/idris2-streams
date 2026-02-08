@@ -11,25 +11,59 @@ import IO.Async
 
 %default total
 
-record ST a where
+--------------------------------------------------------------------------------
+-- Sinks
+--------------------------------------------------------------------------------
+
+public export
+record Sink a where
+  [noHints]
   constructor S
+  sink1 : a -> IO1 ()
+
+export
+Semigroup (Sink a) where
+  S s1 <+> S s2 = S $ \v,t => let _ # t := s1 v t in s2 v t
+
+export
+Monoid (Sink a) where
+  neutral = S $ \_,t => () # t
+
+export %inline
+cmap : (b -> a) -> Sink a -> Sink b
+cmap f (S g) = S (g . f)
+
+export %inline
+sink : HasIO io => (s : Sink a) => a -> io ()
+sink = runIO . s.sink1
+
+export %inline
+sinkAs : HasIO io => (0 a : Type) -> (s : Sink a) => a -> io ()
+sinkAs a = sink
+
+--------------------------------------------------------------------------------
+-- Signals
+--------------------------------------------------------------------------------
+
+record ST a where
+  constructor SS
   value     : a
   last      : Nat
   listeners : List (Once World (a,Nat))
 
 %inline
 putImpl : a -> ST a -> (ST a, IO1 ())
-putImpl v (S _ lst []) = (S v (S lst) [], (() # ))
-putImpl v (S _ lst ls) =
+putImpl v (SS _ lst []) = (SS v (S lst) [], (() # ))
+putImpl v (SS _ lst ls) =
   let n := S lst
-   in (S v n [], traverse1_ (\o => putOnce1 o (v,n)) ls)
+   in (SS v n [], traverse1_ (\o => putOnce1 o (v,n)) ls)
 
 %inline
 updImpl : (a -> (a,b)) -> ST a -> (ST a, IO1 b)
-updImpl f (S cur lst ls) =
+updImpl f (SS cur lst ls) =
   let n     := S lst
       (v,r) := f cur
-   in ( S v n []
+   in ( SS v n []
       , \t => let _ # t := traverse1_ (\o => putOnce1 o (v,n)) ls t in r # t
       )
 
@@ -40,10 +74,10 @@ nextImpl :
   -> Once World (a,Nat)
   -> ST a
   -> (ST a, Async e es (a,Nat))
-nextImpl poll last once st@(S v lst ls) =
+nextImpl poll last once st@(SS v lst ls) =
   case last == lst of
     False => (st, pure (v,lst))
-    True  => (S v lst (once :: ls), poll (awaitOnce once))
+    True  => (SS v lst (once :: ls), poll (awaitOnce once))
 
 export
 record SignalRef a where
@@ -54,7 +88,7 @@ record SignalRef a where
 ||| An observable, mutable value
 export
 signal : Lift1 World f => a -> f (SignalRef a)
-signal v = SR <$> newref (S v 1 [])
+signal v = SR <$> newref (SS v 1 [])
 
 ||| An observable, mutable reference that initially holds no value.
 export %inline
@@ -124,6 +158,14 @@ next (SR ref) n = do
   uncancelable $ \poll => do
     act <- update ref (nextImpl poll n def)
     act
+
+export %hint
+signalSink : (r : SignalRef t) => Sink t
+signalSink = S (put1 r)
+
+export %hint
+emptySignalSink : (r : SignalRef (Maybe t)) => Sink t
+emptySignalSink = S (put1 r . Just)
 
 --------------------------------------------------------------------------------
 -- Signal Streams
