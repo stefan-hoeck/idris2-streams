@@ -248,6 +248,11 @@ export
 until : Discrete f => f a -> (a -> Bool) -> Async e [] ()
 until ref pred = assert_total $ discrete ref |> any pred |> drain |> mpull
 
+||| Observes part of a value in a signal, firing whenever the value changes.
+export
+onChange : Eq b => Discrete f => f a -> (a -> b) -> Stream (Async e) es b
+onChange s f = discrete s |> mapOutput f |> distinct
+
 --------------------------------------------------------------------------------
 -- Writing from Streams to Signals
 --------------------------------------------------------------------------------
