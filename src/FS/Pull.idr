@@ -716,6 +716,11 @@ foreach f p =
     Left x      => pure x
     Right (v,p) => exec (f v) >> foreach f p
 
+||| Utility alias for `foreach . const`.
+export %inline
+foreach' : f es () -> Pull f o es r -> Pull f q es r
+foreach' = foreach . const
+
 ||| Performs the given action on every chunk of values of the stream without
 ||| otherwise affecting the emitted values.
 export
@@ -724,6 +729,11 @@ observe act p =
   assert_total $ uncons p >>= \case
     Left x      => pure x
     Right (v,p) => exec (act v) >> cons v (observe act p)
+
+||| Utility alias for `observe . const`.
+export %inline
+observe' : f es () -> Pull f o es r -> Pull f o es r
+observe' = observe . const
 
 ||| Converts every chunk of output to a new stream,
 ||| concatenating the resulting streams before emitting the final
