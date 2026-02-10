@@ -94,13 +94,21 @@ every0 x = zipRight (cons () $ timed x ())
 ||| Converts a bounded queue of values into an infinite stream
 ||| of values.
 export %inline
-dequeue : BQueue o -> AsyncPull e o es ()
+dequeue : BQueue o -> AsyncStream e es o
 dequeue = repeat . eval . dequeue
+
+export %inline
+Discrete BQueue where
+  discrete = dequeue
 
 ||| Converts a channel of chunks into an infinite stream of values.
 export %inline
 receive : Channel o -> AsyncStream e es o
 receive = unfoldEvalMaybe . receive
+
+export %inline
+Discrete Channel where
+  discrete = receive
 
 --------------------------------------------------------------------------------
 -- Interrupting Streams
