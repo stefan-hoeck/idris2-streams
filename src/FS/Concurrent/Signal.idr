@@ -332,7 +332,7 @@ record Event e es a where
   events    : Stream (Async e) es a
   {auto snk : Sink a}
 
-event_ : Maybe a -> Async e es (Event e es a)
+event_ : Maybe a -> Async e es (Event e fs a)
 event_ ini = Prelude.do
   sig <- signal ini
   pure $ E (justs sig) @{S $ put1 sig . Just}
@@ -340,10 +340,10 @@ event_ ini = Prelude.do
 ||| A discrete stream of values plus a sink for sending such values
 ||| to the stream.
 export %inline
-event : (0 a : Type) -> Async e es (Event e es a)
+event : (0 a : Type) -> Async e es (Event e fs a)
 event _ = event_ Nothing
 
 ||| Like `event` but is already "charged" with an initial value.
 export %inline
-eventFrom : (ini : a) -> Async e es (Event e es a)
+eventFrom : (ini : a) -> Async e es (Event e fs a)
 eventFrom = event_ . Just
