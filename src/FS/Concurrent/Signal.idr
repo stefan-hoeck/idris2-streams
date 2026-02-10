@@ -181,6 +181,10 @@ record Signal a where
   constructor SI
   sref : SignalRef a
 
+export %inline %hint
+ref2sig : SignalRef a => Signal a
+ref2sig @{r} = SI r
+
 export %inline
 sig : SignalRef a -> Signal a
 sig = SI
