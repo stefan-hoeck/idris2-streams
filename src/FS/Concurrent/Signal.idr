@@ -326,20 +326,10 @@ hforeachSig sigs fun =
 -- Events
 --------------------------------------------------------------------------------
 
-export
-record Event a where
-  constructor E
-  ref : SignalRef (Maybe a)
-
-||| An observable, mutable reference that initially holds no value.
+||| A discrete stream of values plus a sink for sending such values
+||| to the stream.
 export %inline
-event : Lift1 World f => (0 a : Type) -> f (Event a)
-event _ = E <$> signal Nothing
-
-export %inline
-Discrete Event where
-  discrete (E sig) = discrete sig |> catMaybes
-
-export
-eventSink : Event t -> Sink t
-eventSink (E r) = S (put1 r . Just)
+event : (0 a : Type) -> Async e es (Stream (Async e) es a, Sink a)
+event _ = Prelude.do
+  sig <- signal Nothing
+  pure (justs sig, S $ put1 sig . Just)
