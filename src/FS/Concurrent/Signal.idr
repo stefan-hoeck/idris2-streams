@@ -326,18 +326,24 @@ hforeachSig sigs fun =
 -- Events
 --------------------------------------------------------------------------------
 
-event_ : Maybe a -> Async e es (Stream (Async e) es a, Sink a)
+public export
+record Event e es a where
+  constructor E
+  events    : Stream (Async e) es a
+  {auto snk : Sink a}
+
+event_ : Maybe a -> Async e es (Event e es a)
 event_ ini = Prelude.do
   sig <- signal ini
-  pure (justs sig, S $ put1 sig . Just)
+  pure $ E (justs sig) @{S $ put1 sig . Just}
 
 ||| A discrete stream of values plus a sink for sending such values
 ||| to the stream.
 export %inline
-event : (0 a : Type) -> Async e es (Stream (Async e) es a, Sink a)
+event : (0 a : Type) -> Async e es (Event e es a)
 event _ = event_ Nothing
 
 ||| Like `event` but is already "charged" with an initial value.
 export %inline
-eventFrom : (ini : a) -> Async e es (Stream (Async e) es a, Sink a)
+eventFrom : (ini : a) -> Async e es (Event e es a)
 eventFrom = event_ . Just
