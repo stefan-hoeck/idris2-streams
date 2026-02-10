@@ -41,13 +41,13 @@ export %inline
 sinkAs : HasIO io => (0 a : Type) -> (s : Sink a) => a -> io ()
 sinkAs a = sink
 
-export %hint %inline
-onceSink : (o : Once World t) => Sink t
-onceSink = S (putOnce1 o)
+export %inline
+onceSink : Once World t -> Sink t
+onceSink o = S (putOnce1 o)
 
-export %hint %inline
-deferredSink : (o : Deferred World t) => Sink t
-deferredSink = S (putDeferred1 o)
+export %inline
+deferredSink : Deferred World t -> Sink t
+deferredSink o = S (putDeferred1 o)
 
 --------------------------------------------------------------------------------
 -- Signals
@@ -162,9 +162,9 @@ next (SR ref) n = do
     act <- update ref (nextImpl poll n def)
     act
 
-export %hint
-signalSink : (r : SignalRef t) => Sink t
-signalSink = S (put1 r)
+export %inline
+signalSink : SignalRef t -> Sink t
+signalSink r = S (put1 r)
 
 --------------------------------------------------------------------------------
 -- Signal Streams
@@ -180,10 +180,6 @@ record Signal a where
   [noHints]
   constructor SI
   sref : SignalRef a
-
-export %inline %hint
-ref2sig : SignalRef a => Signal a
-ref2sig @{r} = SI r
 
 export %inline
 sig : SignalRef a -> Signal a
@@ -330,20 +326,10 @@ hforeachSig sigs fun =
 -- Events
 --------------------------------------------------------------------------------
 
-export
-record Event a where
-  constructor E
-  ref : SignalRef (Maybe a)
-
-||| An observable, mutable reference that initially holds no value.
+||| A discrete stream of values plus a sink for sending such values
+||| to the stream.
 export %inline
-event : Lift1 World f => (0 a : Type) -> f (Event a)
-event _ = E <$> signal Nothing
-
-export %inline
-Discrete Event where
-  discrete (E sig) = discrete sig |> catMaybes
-
-export %hint
-eventSink : Event t => Sink t
-eventSink @{E r} = S (put1 r . Just)
+event : (0 a : Type) -> Async e es (Stream (Async e) es a, Sink a)
+event _ = Prelude.do
+  sig <- signal Nothing
+  pure (justs sig, S $ put1 sig . Just)
