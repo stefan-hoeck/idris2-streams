@@ -41,6 +41,14 @@ export %inline
 sinkAs : HasIO io => (0 a : Type) -> (s : Sink a) => a -> io ()
 sinkAs a = sink
 
+export %hint %inline
+onceSink : (o : Once World t) => Sink t
+onceSink = S (putOnce1 o)
+
+export %hint %inline
+deferredSink : (o : Deferred World t) => Sink t
+deferredSink = S (putDeferred1 o)
+
 --------------------------------------------------------------------------------
 -- Signals
 --------------------------------------------------------------------------------
@@ -89,11 +97,6 @@ record SignalRef a where
 export
 signal : Lift1 World f => a -> f (SignalRef a)
 signal v = SR <$> newref (SS v 1 [])
-
-||| An observable, mutable reference that initially holds no value.
-export %inline
-emptySignal : Lift1 World f => (0 a : Type) -> f (SignalRef $ Maybe a)
-emptySignal _ = signal Nothing
 
 ||| Reads the current value of the signal.
 export %inline
@@ -163,10 +166,6 @@ export %hint
 signalSink : (r : SignalRef t) => Sink t
 signalSink = S (put1 r)
 
-export %hint
-emptySignalSink : (r : SignalRef (Maybe t)) => Sink t
-emptySignalSink = S (put1 r . Just)
-
 --------------------------------------------------------------------------------
 -- Signal Streams
 --------------------------------------------------------------------------------
@@ -222,9 +221,13 @@ interface Discrete (0 t : Type -> Type) where
   ||| Creates a discrete stream of values that reads an observable
   ||| value every time it changes.
   |||
-  ||| Note: There is no buffering of values. If the signal is updated
+  ||| Note: For `Signal` and `Event`, there is no buffering of values.
+  |||       If the they are updated
   |||       more quickly than the stream is being pulled, some values
   |||       might be lost.
+  |||
+  |||       If you require buffering, use a `IO.Async.BQueue` (single observer)
+  |||       or a `IO.Async.Channel` (multiple observers).
   discrete : t a -> Stream (Async e) es a
 
 export
@@ -234,6 +237,14 @@ Discrete SignalRef where
 export %inline
 Discrete Signal where
   discrete = discrete . sref
+
+export %inline
+Discrete (Once World) where
+  discrete = eval . awaitOnce
+
+export %inline
+Discrete (Deferred World) where
+  discrete = eval . await
 
 ||| Like `discrete` but for an initially empty signal.
 |||
@@ -314,3 +325,25 @@ hforeachSig sigs fun =
   foreach $ \vo => Prelude.do
     vs <- hsequence $ mapProperty current sigs
     happly fun (vo::vs)
+
+--------------------------------------------------------------------------------
+-- Events
+--------------------------------------------------------------------------------
+
+export
+record Event a where
+  constructor E
+  ref : SignalRef (Maybe a)
+
+||| An observable, mutable reference that initially holds no value.
+export %inline
+event : Lift1 World f => (0 a : Type) -> f (Event a)
+event _ = E <$> signal Nothing
+
+export %inline
+Discrete Event where
+  discrete (E sig) = discrete sig |> catMaybes
+
+export %hint
+eventSink : Event t => Sink t
+eventSink @{E r} = S (put1 r . Just)
