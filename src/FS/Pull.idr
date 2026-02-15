@@ -585,13 +585,26 @@ scan s1 f p =
     Right (v,q) => let (w,s2) := f s1 v in cons w (scan s2 f q)
 
 ||| Emits values of the original pull, but emits consecutive
-||| identical values only once.
+||| values for which `f` returns `True` only once.
+|||
+||| Note: For this to work correctly, `f` must be an equivalence relation.
+|||       This function makes no guarantees about the order in which arguments
+|||       are passed to `f`, so `f` must be symmetric. It also makes
+|||       no guarantees about which emitted value is being kept in its
+|||       internal state, so `f` must be transitive.
 export
-distinct : Eq o => Pull f o es r -> Pull f o es r
-distinct = catMaybes . scan Nothing next
+distinctBy : (o -> o -> Bool) -> Pull f o es r -> Pull f o es r
+distinctBy f = catMaybes . scan Nothing next
   where
     next : Maybe o -> o -> (Maybe o, Maybe o)
-    next m v = if m == Just v then (Nothing,m) else (Just v, Just v)
+    next Nothing  v = (Just v, Just v)
+    next (Just x) v = if f x v then (Nothing,Just v) else (Just v, Just v)
+
+||| Emits values of the original pull, but emits consecutive
+||| identical values only once.
+export %inline
+distinct : Eq o => Pull f o es r -> Pull f o es r
+distinct = distinctBy (==)
 
 ||| General stateful conversion of a `Pull`s emit.
 |||
