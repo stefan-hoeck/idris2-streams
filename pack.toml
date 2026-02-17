@@ -52,23 +52,23 @@ ipkg   = "bytestring.ipkg"
 [custom.all.async]
 type   = "git"
 url    = "https://github.com/stefan-hoeck/idris2-async"
-commit = "latest:main"
+commit = "latest:refactor_loggable"
 ipkg   = "async.ipkg"
 
 [custom.all.async-spec]
 type   = "git"
 url    = "https://github.com/stefan-hoeck/idris2-async"
-commit = "latest:main"
+commit = "latest:refactor_loggable"
 ipkg   = "async-spec/async-spec.ipkg"
 
 [custom.all.async-posix]
 type   = "git"
 url    = "https://github.com/stefan-hoeck/idris2-async"
-commit = "latest:main"
+commit = "latest:refactor_loggable"
 ipkg   = "async-posix/async-posix.ipkg"
 
 [custom.all.async-epoll]
 type   = "git"
 url    = "https://github.com/stefan-hoeck/idris2-async"
-commit = "latest:main"
+commit = "latest:refactor_loggable"
 ipkg   = "async-epoll/async-epoll.ipkg"

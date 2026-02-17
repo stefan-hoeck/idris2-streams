@@ -531,8 +531,7 @@ signalOn1 tick sig = resource (hold1 sig) (zipRight tick . stream)
 --------------------------------------------------------------------------------
 
 parameters {0 es     : List Type}
-           {auto lgs : All Loggable es}
-           {auto log : Logger e}
+           {auto lgs : All (Loggable e) es}
 
   export
   logExec : (dflt : t) -> Async e es t -> Pull (Async e) o [] t
