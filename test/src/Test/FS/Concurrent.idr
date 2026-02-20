@@ -92,6 +92,10 @@ parameters {auto sr : Sink (Action Nat)}
   switchInner 3 = timedN 3 3.ms |> P.take 5
   switchInner n = timedN n 3.ms
 
+  switchInnerLR : Nat -> AsyncStream e [String] Nat
+  switchInnerLR 2 = exec (sleep 1000.s) >> emit 2
+  switchInnerLR n = switchInner n
+
   switchInnerErr : Nat -> AsyncStream e [String] Nat
   switchInnerErr 2 = throw "Oops"
   switchInnerErr n = switchInner n
@@ -197,6 +201,9 @@ instrs =
 
   , "a stream created with switchMap" `should` "stop inner streams upon output from the outer stream" !:
       assertOut Nat (switchMap switchInner switchOuter) [1,1,1,2,2,3,3,3,3,3]
+
+  , it `should` "abort long running effects from an inner stream upon output from the outer stream" !:
+      assertOut Nat (switchMap switchInnerLR switchOuter) [1,1,1,3,3,3,3,3]
 
   , it `should` "allocate all required resources" !:
       assertSortedAcquired Nat (switchMap switchInner switchOuter) [0,1,2,3]

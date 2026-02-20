@@ -414,8 +414,10 @@ parameters (ps    : AsyncStream e es p)
 
     switchInner : Deferred World () -> AsyncStream e es p
     switchInner halt =
-      bracket (acquire guard) (const $ release guard) $ \_ =>
-        interruptOnAny halt ps
+      interruptOnAny halt $
+        bracket
+          (acquire guard)
+          (const $ release guard) $ \_ => ps
 
     switchHalted : IORef (Maybe $ Deferred World ()) -> Async e es (AsyncStream e es p)
     switchHalted ref = do
