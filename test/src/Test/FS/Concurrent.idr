@@ -1,5 +1,6 @@
 module Test.FS.Concurrent
 
+import FS.Concurrent.Signal
 import Test.FS.Runner
 
 %default total
@@ -93,7 +94,7 @@ parameters {auto sr : Sink (Action Nat)}
   switchInner n = timedN n 3.ms
 
   switchInnerLR : Nat -> AsyncStream e [String] Nat
-  switchInnerLR 2 = exec (sleep 1000.s) >> emit 2
+  switchInnerLR 2 = exec (event Nat) >>= events
   switchInnerLR n = switchInner n
 
   switchInnerErr : Nat -> AsyncStream e [String] Nat

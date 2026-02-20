@@ -1,5 +1,6 @@
 module FS.Concurrent.Signal
 
+import public Data.Linear.Sink
 import Data.Linear.Deferred
 import Data.Linear.Ref1
 import Data.Linear.Traverse1
@@ -10,44 +11,6 @@ import FS.Pull
 import IO.Async
 
 %default total
-
---------------------------------------------------------------------------------
--- Sinks
---------------------------------------------------------------------------------
-
-public export
-record Sink a where
-  [noHints]
-  constructor S
-  sink1 : a -> IO1 ()
-
-export
-Semigroup (Sink a) where
-  S s1 <+> S s2 = S $ \v,t => let _ # t := s1 v t in s2 v t
-
-export
-Monoid (Sink a) where
-  neutral = S $ \_,t => () # t
-
-export %inline
-cmap : (b -> a) -> Sink a -> Sink b
-cmap f (S g) = S (g . f)
-
-export %inline
-sink : HasIO io => (s : Sink a) => a -> io ()
-sink = runIO . s.sink1
-
-export %inline
-sinkAs : HasIO io => (0 a : Type) -> (s : Sink a) => a -> io ()
-sinkAs a = sink
-
-export %inline
-onceSink : Once World t -> Sink t
-onceSink o = S (putOnce1 o)
-
-export %inline
-deferredSink : Deferred World t -> Sink t
-deferredSink o = S (putDeferred1 o)
 
 --------------------------------------------------------------------------------
 -- Signals

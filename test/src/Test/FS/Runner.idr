@@ -33,11 +33,11 @@ export %inline
 
 export %inline
 (h : Sink (Action a)) => Resource (Async e) (Handled a) where
-  cleanup v = lift1 $ h.sink (R v.val)
+  cleanup v = sinkTo h (R v.val)
 
 export %inline
 alloc : (h : Sink (Action a)) => a -> Async e es (Handled a)
-alloc v = lift1 (h.sink (A v)) $> H v
+alloc v = sink (A v) $> H v
 
 export %inline
 allocNat : Sink (Action Nat) => Nat -> Async e es (Handled Nat)
@@ -124,12 +124,12 @@ testNN :
 testNN = testStream Nat Nat
 
 export %inline
-toSink : LIO (f es) => (s : Sink o) => Pull f o es r -> Pull f Void es r
-toSink = foreach (lift1 . s.sink)
+toSink : HasIO (f es) => (s : Sink o) => Pull f o es r -> Pull f Void es r
+toSink = foreach sink
 
 export %inline
-sinkAll : LIO (f es) => (s : Sink o) => Pull f (List o) es r -> Pull f Void es r
-sinkAll = foreach (lift1 . traverse1_ s.sink)
+sinkAll : HasIO (f es) => (s : Sink o) => Pull f (List o) es r -> Pull f Void es r
+sinkAll = foreach (traverse_ sink)
 
 export
 acquired : Runres es ev o r -> List ev
