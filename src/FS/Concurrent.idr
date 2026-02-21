@@ -212,6 +212,12 @@ mergeHaltBoth : (s1,s2 : AsyncStream  e es o) -> AsyncStream e es o
 mergeHaltBoth s1 s2 =
   takeWhileJust $ merge [endWithNothing s1, endWithNothing s2]
 
+||| Runs the second stream until the first emits a value
+export
+haltOn : AsyncStream  e es o -> AsyncStream e es p -> AsyncStream e es p
+haltOn s1 s2 =
+  takeWhileJust $ merge [mapOutput (const Nothing) s1, mapOutput Just s2]
+
 --------------------------------------------------------------------------------
 -- Parallel Joining of Streams
 --------------------------------------------------------------------------------
