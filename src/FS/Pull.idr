@@ -713,6 +713,16 @@ parameters {0 es      : List Type}
   evalScans1 vp fun =
     evalScan vp $ \vp1,vo => (\vp2 => (vp2,vp2)) <$> fun vp1 vo
 
+  ||| Like `evalScans` but specialized to a pull of unary effectful functions.
+  export %inline
+  evalScanFrom : o -> Pull f (o -> f es o) es r -> Pull f o es r
+  evalScanFrom vo = evalScans vo (\x,f => f x)
+
+  ||| Like `evalScans1` but specialized to a pull of unary effectful functions.
+  export %inline
+  evalScanFrom1 : o -> Pull f (o -> f es o) es r -> Pull f o es r
+  evalScanFrom1 vo = evalScans1 vo (\x,f => f x)
+
 --------------------------------------------------------------------------------
 -- Observing and Draining Streams
 --------------------------------------------------------------------------------
