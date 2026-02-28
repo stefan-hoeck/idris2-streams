@@ -290,6 +290,42 @@ hforeachSig sigs fun =
     happly fun (vo::vs)
 
 --------------------------------------------------------------------------------
+-- Mutable
+--------------------------------------------------------------------------------
+
+public export
+interface Mutable (0 t : Type -> Type) where
+  mutate : {0 a : Type} -> LIO f => t a -> (a -> a) -> f ()
+
+export %inline
+Mutable IORef where mutate = mod
+
+export %inline
+Mutable SignalRef where mutate = modify
+
+parameters {0 f  : List Type -> Type -> Type}
+           {0 es : List Type}
+           {0 t  : Type -> Type}
+           {auto lio : LIO (f es)}
+           {auto mut : Mutable t}
+
+  export %inline
+  modAt : t a -> (o -> a -> a) -> Pull f o es r -> Pull f p es r
+  modAt ref fun = foreach (mutate ref . fun)
+
+  export %inline
+  writeTo : t a -> Pull f a es r -> Pull f p es r
+  writeTo ref = modAt ref const
+
+  export %inline
+  teeMod : t a -> (o -> a -> a) -> Pull f o es r -> Pull f o es r
+  teeMod ref fun = observe (mutate ref . fun)
+
+  export %inline
+  teeTo : t a -> Pull f a es r -> Pull f a es r
+  teeTo ref = teeMod ref const
+
+--------------------------------------------------------------------------------
 -- Events
 --------------------------------------------------------------------------------
 
