@@ -267,13 +267,37 @@ parameters {0 f  : List Type -> Type -> Type}
 -- Events
 --------------------------------------------------------------------------------
 
+record EvST a where
+  constructor EvSS
+  listeners : List (Once World a)
+
+%inline
+evputImpl : a -> EvST a -> (EvST a, IO1 ())
+evputImpl v (EvSS ls) = (EvSS [], traverse1_ (\o => putOnce1 o v) ls)
+
+%inline
+evnextImpl : Poll (Async e) -> Once World a -> EvST a -> (EvST a, Async e es a)
+evnextImpl poll once (EvSS ls) = (EvSS (once :: ls), poll (awaitOnce once))
+
 public export
-record Event a where
+record Event e es a where
   constructor E
-  events    : {0 e : Type} -> {0 es : List Type} -> Stream (Async e) es a
+  events    : Stream (Async e) es a
   {auto snk : Sink a}
+
+nextEv : IORef (EvST a) -> Async e es a
+nextEv ref = do
+  def <- onceOf a
+  uncancelable $ \poll => do
+    act <- update ref (evnextImpl poll def)
+    act
 
 ||| A discrete stream of values plus a sink for sending such values
 ||| to the stream.
 export %inline
-event : (0 a : Type) -> Async e es (Event a)
+event : (0 a : Type) -> Async e es (Event e fs a)
+event a = Prelude.do
+  r <- newref (EvSS {a} [])
+  pure $ E
+    (repeat $ eval (nextEv r))
+    @{S $ \v,t => let f # t := casupdate1 r (evputImpl v) t in f t}

@@ -94,7 +94,7 @@ parameters {auto sr : Sink (Action Nat)}
   switchInner n = timedN n 3.ms
 
   switchInnerLR : Nat -> AsyncStream e [String] Nat
-  switchInnerLR 2 = exec (event Nat) >>= events
+  switchInnerLR 2 = exec (event Nat) >>= Event.events
   switchInnerLR n = switchInner n
 
   switchInnerErr : Nat -> AsyncStream e [String] Nat
