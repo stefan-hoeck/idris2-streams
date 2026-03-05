@@ -294,10 +294,15 @@ nextEv ref = do
 
 ||| A discrete stream of values plus a sink for sending such values
 ||| to the stream.
-export %inline
+export
 event : (0 a : Type) -> Async e es (Event e fs a)
 event a = Prelude.do
   r <- newref (EvSS {a} [])
   pure $ E
     (repeat $ eval (nextEv r))
     @{S $ \v,t => let f # t := casupdate1 r (evputImpl v) t in f t}
+
+||| Like `event` but is already "charged" with an initial value.
+export
+eventFrom : (ini : a) -> Async e es (Event e fs a)
+eventFrom i = {events $= \es => cons i es} <$> event a
