@@ -32,10 +32,15 @@ parrunCase :
   -> Async e es (Fiber [] ())
 parrunCase check finally p =
   assert_total $ start $ ignore $
-    guaranteeCase (pull $ interruptOnAny check p) $ \case
-      Succeeded res => finally res
-      Canceled      => finally Canceled
-      Error err impossible
+    guaranteeCase (raceOutcome {es = []} (await check) (pull p)) $ \case
+      -- Succeeded res => finally res
+      -- Canceled      => finally Canceled
+      -- Error err impossible
+      Succeeded (Left _) => finally Canceled
+      Succeeded (Right $ Succeeded o) => finally o
+      Succeeded (Right x) => finally Canceled
+      Canceled  => finally Canceled
+      Error _ impossible
 
 ||| Concurrently runs the given stream until it either terminates or
 ||| is interrupted by `check`.
