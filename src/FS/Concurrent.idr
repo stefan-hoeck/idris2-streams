@@ -266,7 +266,7 @@ parameters (done      : Deferred World (Result es ()))
       modify running S         -- increase the number of running fibers
       poll $ ignore $ parrunCase
         done
-        (\o => putErr done o >> decRunning >> release available)
+        (\o => putStrLn "parJoin ending inner" >> putErr done o >> decRunning >> release available)
         (foreach (ignore . send output) s)
 
   -- Runs the outer stream on its own fiber until it terminates gracefully
@@ -276,7 +276,7 @@ parameters (done      : Deferred World (Result es ()))
   outer ss =
     parrunCase
       done
-      (\o => putErr done o >> decRunning >> until running (== 0) >> doUnlease) $
+      (\o => putStrLn "parJoin ending outer" >> putErr done o >> decRunning >> until running (== 0) >> doUnlease) $
         flatMap ss $ \v => do
           sc <- scope
           exec (doLease sc >> inner v)
