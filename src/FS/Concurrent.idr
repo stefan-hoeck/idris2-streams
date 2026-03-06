@@ -556,3 +556,79 @@ parameters {0 es     : List Type}
   export %inline
   tryStream : Stream (Async e) es o -> Stream (Async e) [] o
   tryStream = tryPull ()
+
+--------------------------------------------------------------------------------
+-- Read-only Signals
+--------------------------------------------------------------------------------
+
+||| An observe-only wrapper around a `SignalRef`.
+|||
+||| Use this if you still want to observe a mutable value by means of
+||| `discrete` or `continuous` but you want to prevent it to be further used
+||| as a data sink.
+export
+record Signal a where
+  constructor MkSignal
+  signow  : IO1 a
+  sigdisc : {0 e : Type} -> {0 es : List Type} -> Stream (Async e) es a
+
+export
+sig : SignalRef a -> Signal a
+sig s = MkSignal (current1 s) (discrete s)
+
+export %inline
+Reference Signal where
+  current1 = signow
+
+export %inline
+Discrete Signal where
+  discrete s = s.sigdisc
+
+export
+Functor Signal where
+  map f (MkSignal n d) =
+    MkSignal
+      (\t => let v # t := n t in f v # t)
+      (mapOutput f d)
+
+export
+Applicative Signal where
+  pure v = MkSignal (v #) (emit v)
+  MkSignal nf df <*> MkSignal nv dv =
+    MkSignal
+      (\t => let f # t := nf t; v # t := nv t; in f v # t) $
+      merge
+        [ evalMap (\f => f <$> lift1 nv) df
+        , evalMap (\v => ($ v) <$> lift1 nf) dv
+        ]
+
+||| Generalization of `observeSig`: Acts on the output of a pull by combining
+||| with the values from a heterogeneous list of signals.
+export
+hobserveSig :
+     {0 f      : List Type -> Type -> Type}
+  -> {0 es,ts  : List Type}
+  -> {auto lio : LIO (f es)}
+  -> All Signal ts
+  -> HZipFun (o::ts) (f es ())
+  -> Pull f o es r
+  -> Pull f o es r
+hobserveSig sigs fun =
+  observe $ \vo => Prelude.do
+    vs <- hsequence $ mapProperty current sigs
+    happly fun (vo::vs)
+
+||| Like `hobserveSig` but drains the stream in the process.
+export
+hforeachSig :
+     {0 f      : List Type -> Type -> Type}
+  -> {0 es,ts  : List Type}
+  -> {auto lio : LIO (f es)}
+  -> All Signal ts
+  -> HZipFun (o::ts) (f es ())
+  -> Pull f o es r
+  -> Pull f q es r
+hforeachSig sigs fun =
+  foreach $ \vo => Prelude.do
+    vs <- hsequence $ mapProperty current sigs
+    happly fun (vo::vs)

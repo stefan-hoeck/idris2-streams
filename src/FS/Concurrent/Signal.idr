@@ -129,29 +129,6 @@ export %inline
 signalSink : SignalRef t -> Sink t
 signalSink r = S (put1 r)
 
---------------------------------------------------------------------------------
--- Signal Streams
---------------------------------------------------------------------------------
-
-||| An observe-only wrapper around a `SignalRef`.
-|||
-||| Use this if you still want to observe a mutable value by means of
-||| `discrete` or `continuous` but you want to prevent it to be further used
-||| as a data sink.
-export
-record Signal a where
-  [noHints]
-  constructor SI
-  sref : SignalRef a
-
-export %inline %hint
-ref2sig : SignalRef a => Signal a
-ref2sig @{r} = SI r
-
-export %inline
-sig : SignalRef a -> Signal a
-sig = SI
-
 public export
 interface Reference (0 t : Type -> Type) where
   current1 : t a -> IO1 a
@@ -159,13 +136,6 @@ interface Reference (0 t : Type -> Type) where
 export %inline
 current : LIO f => Reference t => t a -> f a
 current = lift1 . current1
-
-||| Creates a continuous stream of values typically by reading
-||| the current state of a mutable reference every time a value is
-||| pulled.
-export
-continuous : LIO (f es) => Reference t => t a -> Stream f es a
-continuous = repeat . eval . current
 
 export %inline
 Reference IORef where
@@ -175,9 +145,12 @@ export %inline
 Reference SignalRef where
   current1 = ioToF1 . get
 
-export %inline
-Reference Signal where
-  current1 = current1 . sref
+||| Creates a continuous stream of values typically by reading
+||| the current state of a mutable reference every time a value is
+||| pulled.
+export
+continuous : LIO (f es) => Reference t => t a -> Stream f es a
+continuous = repeat . eval . current
 
 public export
 interface Discrete (0 t : Type -> Type) where
@@ -196,10 +169,6 @@ interface Discrete (0 t : Type -> Type) where
 export
 Discrete SignalRef where
   discrete s = unfoldEval 0 (map (uncurry More) . next s)
-
-export %inline
-Discrete Signal where
-  discrete = discrete . sref
 
 export %inline
 Discrete (Once World) where
@@ -258,37 +227,6 @@ parameters {0 f      : List Type -> Type -> Type}
   foreachSig : (o -> p -> f es ()) -> Pull f o es r -> Pull f q es r
   foreachSig f = foreach $ \vo => get sig >>= f vo
 
-||| Generalization of `observeSig`: Acts on the output of a pull by combining
-||| with the values from a heterogeneous list of signals.
-export
-hobserveSig :
-     {0 f      : List Type -> Type -> Type}
-  -> {0 es,ts  : List Type}
-  -> {auto lio : LIO (f es)}
-  -> All Signal ts
-  -> HZipFun (o::ts) (f es ())
-  -> Pull f o es r
-  -> Pull f o es r
-hobserveSig sigs fun =
-  observe $ \vo => Prelude.do
-    vs <- hsequence $ mapProperty current sigs
-    happly fun (vo::vs)
-
-||| Like `hobserveSig` but drains the stream in the process.
-export
-hforeachSig :
-     {0 f      : List Type -> Type -> Type}
-  -> {0 es,ts  : List Type}
-  -> {auto lio : LIO (f es)}
-  -> All Signal ts
-  -> HZipFun (o::ts) (f es ())
-  -> Pull f o es r
-  -> Pull f q es r
-hforeachSig sigs fun =
-  foreach $ \vo => Prelude.do
-    vs <- hsequence $ mapProperty current sigs
-    happly fun (vo::vs)
-
 --------------------------------------------------------------------------------
 -- Mutable
 --------------------------------------------------------------------------------
@@ -329,24 +267,42 @@ parameters {0 f  : List Type -> Type -> Type}
 -- Events
 --------------------------------------------------------------------------------
 
+record EvST a where
+  constructor EvSS
+  listeners : List (Once World a)
+
+%inline
+evputImpl : a -> EvST a -> (EvST a, IO1 ())
+evputImpl v (EvSS ls) = (EvSS [], traverse1_ (\o => putOnce1 o v) ls)
+
+%inline
+evnextImpl : Poll (Async e) -> Once World a -> EvST a -> (EvST a, Async e es a)
+evnextImpl poll once (EvSS ls) = (EvSS (once :: ls), poll (awaitOnce once))
+
 public export
 record Event e es a where
   constructor E
   events    : Stream (Async e) es a
   {auto snk : Sink a}
 
-event_ : Maybe a -> Async e es (Event e fs a)
-event_ ini = Prelude.do
-  sig <- signal ini
-  pure $ E (justs sig) @{S $ put1 sig . Just}
+nextEv : IORef (EvST a) -> Async e es a
+nextEv ref = do
+  def <- onceOf a
+  uncancelable $ \poll => do
+    act <- update ref (evnextImpl poll def)
+    act
 
 ||| A discrete stream of values plus a sink for sending such values
 ||| to the stream.
-export %inline
+export
 event : (0 a : Type) -> Async e es (Event e fs a)
-event _ = event_ Nothing
+event a = Prelude.do
+  r <- newref (EvSS {a} [])
+  pure $ E
+    (repeat $ eval (nextEv r))
+    @{S $ \v,t => let f # t := casupdate1 r (evputImpl v) t in f t}
 
 ||| Like `event` but is already "charged" with an initial value.
-export %inline
+export
 eventFrom : (ini : a) -> Async e es (Event e fs a)
-eventFrom = event_ . Just
+eventFrom i = {events $= \es => cons i es} <$> event a
