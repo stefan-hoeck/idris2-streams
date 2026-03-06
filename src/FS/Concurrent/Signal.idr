@@ -39,16 +39,11 @@ updImpl f (SS cur lst ls) =
       )
 
 %inline
-nextImpl :
-     Poll (Async e)
-  -> Nat
-  -> Once World (a,Nat)
-  -> ST a
-  -> (ST a, Async e es (a,Nat))
-nextImpl poll last once st@(SS v lst ls) =
+nextImpl : Nat -> Once World (a,Nat) -> ST a -> (ST a, Async e es (a,Nat))
+nextImpl last once st@(SS v lst ls) =
   case last == lst of
     False => (st, pure (v,lst))
-    True  => (SS v lst (once :: ls), poll (awaitOnce once))
+    True  => (SS v lst (once :: ls), awaitOnce once)
 
 export
 record SignalRef a where
@@ -121,9 +116,8 @@ export
 next : SignalRef a -> Nat -> Async e es (a,Nat)
 next (SR ref) n = do
   def <- onceOf (a,Nat)
-  uncancelable $ \poll => do
-    act <- update ref (nextImpl poll n def)
-    act
+  act <- update ref (nextImpl n def)
+  act
 
 export %inline
 signalSink : SignalRef t -> Sink t
@@ -275,10 +269,6 @@ record EvST a where
 evputImpl : a -> EvST a -> (EvST a, IO1 ())
 evputImpl v (EvSS ls) = (EvSS [], traverse1_ (\o => putOnce1 o v) ls)
 
-%inline
-evnextImpl : Poll (Async e) -> Once World a -> EvST a -> (EvST a, Async e es a)
-evnextImpl poll once (EvSS ls) = (EvSS (once :: ls), poll (awaitOnce once))
-
 public export
 record Event e es a where
   constructor E
@@ -288,9 +278,8 @@ record Event e es a where
 nextEv : IORef (EvST a) -> Async e es a
 nextEv ref = do
   def <- onceOf a
-  uncancelable $ \poll => do
-    act <- update ref (evnextImpl poll def)
-    act
+  act <- mod ref (\(EvSS ls) => EvSS $ def :: ls)
+  awaitOnce def
 
 ||| A discrete stream of values plus a sink for sending such values
 ||| to the stream.
