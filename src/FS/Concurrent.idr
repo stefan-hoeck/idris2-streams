@@ -331,9 +331,8 @@ parJoin maxOpen out = do
 
   -- The resulting stream should cleanup resources when it is done.
   -- It should also finalize `done`.
-  finally
-    (putDeferred done (Right ()) >> wait fbr)
-    (interruptOn done (receive output))
+  interruptOn done $
+    finally (putDeferred done (Right ()) >> wait fbr) (receive output)
 
 ||| Convenience alias for `P.mapOutput inner outer |> parJoin maxOpen`
 export %inline

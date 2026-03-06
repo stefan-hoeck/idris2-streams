@@ -73,6 +73,9 @@ parameters {auto sr : Sink (Action Nat)}
   parallel =
     parallel_ (P.take 3 $ timed 10.ms ()) (\n => timedN n 3.ms |> P.take 5)
 
+  parallelSlow : AsyncStream e [String] (AsyncStream e [String] Nat)
+  parallelSlow = parallel_ (P.take 3 $ timed 10.ms ()) (\n => timedN n 10.s |> P.take 5)
+
   parallelErr : AsyncStream e [String] (AsyncStream e [String] Nat)
   parallelErr =
     parallel_ (P.take 3 (timed 10.ms ()) >> throw "Oops") (\n => timedN n 3.ms)
@@ -199,6 +202,9 @@ instrs =
 
   , it `should` "cleanup all allocated resources after an inner stream failed" !:
       assertReleasedAll Nat (parJoin 10 parallelInnerErr)
+
+  , it `should` "abort when it's cancelled from outside" !:
+      assertSorted Nat (merge [parJoin 3 parallel, parJoin 3 parallelSlow] |> P.take 1) [1]
 
   , "a stream created with switchMap" `should` "stop inner streams upon output from the outer stream" !:
       assertOut Nat (switchMap switchInner switchOuter) [1,1,1,2,2,3,3,3,3,3]
