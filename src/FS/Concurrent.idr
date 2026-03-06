@@ -606,6 +606,11 @@ Applicative Signal where
         , evalMap (\v => ($ v) <$> lift1 nf) dv
         ]
 
+export
+Zippable Signal where
+  unzipWith f s = (map (fst . f) s, map (snd . f) s)
+  zipWith f x y = f <$> x <*> y
+
 ||| Generalization of `observeSig`: Acts on the output of a pull by combining
 ||| with the values from a heterogeneous list of signals.
 export
