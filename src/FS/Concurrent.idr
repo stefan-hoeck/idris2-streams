@@ -252,8 +252,8 @@ parameters (done      : Deferred World (Result es ()))
   decRunning : Async e [] ()
   decRunning =
     updateAndGet running pred >>= \case
-      0 => putStrLn "parJoin: no more streams running" >> close output
-      n => putStrLn "parJoin: \{show n} streams still running"
+      0 => close output
+      _ => pure ()
 
   -- Runs an inner stream on its own fiber until it terminates gracefully
   -- or fails with an error. In case of an error, the `done` flag is set
@@ -266,7 +266,7 @@ parameters (done      : Deferred World (Result es ()))
       modify running S         -- increase the number of running fibers
       poll $ ignore $ parrunCase
         done
-        (\o => putStrLn "parJoin ending inner" >> putErr done o >> decRunning >> release available)
+        (\o => putErr done o >> decRunning >> release available)
         (foreach (ignore . send output) s)
 
   -- Runs the outer stream on its own fiber until it terminates gracefully
@@ -276,7 +276,7 @@ parameters (done      : Deferred World (Result es ()))
   outer ss =
     parrunCase
       done
-      (\o => putStrLn "parJoin ending outer" >> putErr done o >> decRunning >> until running (== 0) >> doUnlease) $
+      (\o => putErr done o >> decRunning >> until running (== 0) >> doUnlease) $
         flatMap ss $ \v => do
           sc <- scope
           exec (doLease sc >> inner v)
@@ -332,7 +332,7 @@ parJoin maxOpen out = do
   -- The resulting stream should cleanup resources when it is done.
   -- It should also finalize `done`.
   interruptOn done $
-    finally (putStrLn "ending parJoin" >> putDeferred done (Right ()) >> wait fbr) (receive output)
+    finally (putDeferred done (Right ()) >> wait fbr) (receive output)
 
 ||| Convenience alias for `P.mapOutput inner outer |> parJoin maxOpen`
 export %inline
@@ -421,15 +421,14 @@ parameters (ps    : AsyncStream e es p)
     switchInner halt =
       interruptOnAny halt $
         bracket
-          (putStrLn "acquiring guard" >> acquire guard)
-          (const $ putStrLn "releasing guard" >> release guard) $ \_ => ps
+          (acquire guard)
+          (const $ release guard) $ \_ => ps
 
     switchHalted : IORef (Maybe $ Deferred World ()) -> Async e es (AsyncStream e es p)
     switchHalted ref = do
-      putStrLn "switching to new stream"
       halt <- deferredOf ()
       prev <- update ref (Just halt,)
-      for_ prev $ \p => putStrLn "interrupting previous stream" >> putDeferred p ()
+      for_ prev $ \p => putDeferred p ()
       pure $ switchInner halt
 
 ||| Like `flatMap` but interrupts the inner stream when
