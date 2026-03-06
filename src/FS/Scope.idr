@@ -123,7 +123,7 @@ Target World (Async e) where
   raceInterrupt (I d) act =
     racePair {fs = []} act (await d) >>= \case
       Left  (o,x) => cancel x $> o
-      Right (x,_) => cancel x $> Canceled
+      Right (x,_) => putStrLn "evaluation interrupted" >> cancel x $> Canceled
 
 --------------------------------------------------------------------------------
 -- Scopes
