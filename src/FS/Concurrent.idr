@@ -252,8 +252,8 @@ parameters (done      : Deferred World (Result es ()))
   decRunning : Async e [] ()
   decRunning =
     updateAndGet running pred >>= \case
-      0 => close output
-      _ => pure ()
+      0 => putStrLn "parJoin: no more streams running" >> close output
+      n => putStrLn "parJoin: \{show n} streams still running"
 
   -- Runs an inner stream on its own fiber until it terminates gracefully
   -- or fails with an error. In case of an error, the `done` flag is set
@@ -332,7 +332,7 @@ parJoin maxOpen out = do
   -- The resulting stream should cleanup resources when it is done.
   -- It should also finalize `done`.
   interruptOn done $
-    finally (putDeferred done (Right ()) >> wait fbr) (receive output)
+    finally (putStrLn "ending parJoin" >> putDeferred done (Right ()) >> wait fbr) (receive output)
 
 ||| Convenience alias for `P.mapOutput inner outer |> parJoin maxOpen`
 export %inline
