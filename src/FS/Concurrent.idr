@@ -422,14 +422,15 @@ parameters (ps    : AsyncStream e es p)
     switchInner halt =
       interruptOnAny halt $
         bracket
-          (acquire guard)
-          (const $ release guard) $ \_ => ps
+          (putStrLn "acquiring guard" >> acquire guard)
+          (const $ putStrLn "releasing guard" >> release guard) $ \_ => ps
 
     switchHalted : IORef (Maybe $ Deferred World ()) -> Async e es (AsyncStream e es p)
     switchHalted ref = do
+      putStrLn "switching to new stream"
       halt <- deferredOf ()
       prev <- update ref (Just halt,)
-      for_ prev $ \p => putDeferred p ()
+      for_ prev $ \p => putStrLn "interrupting previous stream" >> putDeferred p ()
       pure $ switchInner halt
 
 ||| Like `flatMap` but interrupts the inner stream when
