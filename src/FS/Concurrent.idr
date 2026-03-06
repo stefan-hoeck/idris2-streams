@@ -576,6 +576,10 @@ export
 sig : SignalRef a -> Signal a
 sig s = MkSignal (current1 s) (discrete s)
 
+export %hint %inline
+ref2sig : SignalRef a => Signal a
+ref2sig = sig %search
+
 export %inline
 Reference Signal where
   current1 = signow
