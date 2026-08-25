@@ -578,6 +578,17 @@ parameters {auto mcn : MCancel f}
       Canceled      => pure neutral
       Error x impossible
 
+  ||| Like `pull` but rethrows the error (if any).
+  |||
+  ||| Returns `neutral` in case the stream was cancelled.
+  export covering
+  mpullErr : Monoid r => Pull f Void es r -> f es r
+  mpullErr p =
+    weakenErrors (pull p) >>= \case
+      Succeeded res => pure res
+      Canceled      => pure neutral
+      Error x       => fail x
+
 ||| Runs a Pull to completion in the given scope, without
 ||| closing the scope. Use this when the pull was generated from
 ||| an outer scope that is still in use.
