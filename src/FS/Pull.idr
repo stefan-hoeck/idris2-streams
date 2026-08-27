@@ -584,6 +584,24 @@ scan s1 f p =
     Left res    => pure res
     Right (v,q) => let (w,s2) := f s1 v in cons w (scan s2 f q)
 
+||| Like `scan` but returns the final state as the pull's result
+export
+scanReturn : s -> (s -> o -> (p,s)) -> Stream f es o -> Pull f p es s
+scanReturn s1 f p =
+  assert_total $ uncons p >>= \case
+    Left _      => pure s1
+    Right (v,q) => let (w,s2) := f s1 v in cons w (scanReturn s2 f q)
+
+||| Like `scanReturn` but with the possibility of failure
+export
+escanReturn : s -> (s -> o -> Result es (p,s)) -> Stream f es o -> Pull f p es s
+escanReturn s1 f p =
+  assert_total $ uncons p >>= \case
+    Left _      => pure s1
+    Right (v,q) =>
+     let Right (w,s2) := f s1 v | Left x => fail x
+      in cons w (escanReturn s2 f q)
+
 ||| Emits values of the original pull, but emits consecutive
 ||| values for which `f` returns `True` only once.
 |||
