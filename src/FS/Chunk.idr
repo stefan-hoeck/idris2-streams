@@ -367,6 +367,8 @@ public export
 interface Functor f => Scan f where
   scanChunk : (s -> o -> (p,s)) -> s -> f o -> (f p, s)
 
+  escanChunk : (s -> o -> Either e (p,s)) -> s -> f o -> Either e (f p, s)
+
 parameters {auto sca : Scan t}
 
   ||| Computes a stateful running total over all elements emitted by a
@@ -374,6 +376,20 @@ parameters {auto sca : Scan t}
   export %inline
   scan : s -> (s -> o -> (p,s)) -> Pull f (t o) es r -> Pull f (t p) es r
   scan ini f = P.scan ini (scanChunk f)
+
+  ||| Like `scan` but returns the final state as the pull's result
+  export %inline
+  scanReturn : s -> (s -> o -> (p,s)) -> Stream f es (t o) -> Pull f (t p) es s
+  scanReturn ini f = P.scanReturn ini (scanChunk f)
+
+  ||| Like `scan` but returns the final state as the pull's result
+  export %inline
+  escanReturn :
+       s
+    -> (s -> o -> Result es (p,s))
+    -> Stream f es (t o)
+    -> Pull f (t p) es s
+  escanReturn ini f = P.escanReturn ini (escanChunk f)
 
   ||| Zips the input with a running total according to `s`, up to but
   ||| not including the current element. Thus the initial
@@ -471,12 +487,24 @@ Chunk (List a) a where
 scanListImpl : SnocList p -> (s -> o -> (p,s)) -> s -> List o -> (List p,s)
 scanListImpl sx f v []        = (sx <>> [], v)
 scanListImpl sx f v (x :: xs) =
-  let (vp,v2) := f v x
+ let (vp,v2) := f v x
   in scanListImpl (sx :< vp) f v2 xs
 
-export
+escanListImpl :
+     SnocList p
+  -> (s -> o -> Either e (p,s))
+  -> s
+  -> List o
+  -> Either e (List p,s)
+escanListImpl sx f v []        = Right (sx <>> [], v)
+escanListImpl sx f v (x :: xs) =
+ let Right (vp,v2) := f v x | Left x => Left x
+  in escanListImpl (sx :< vp) f v2 xs
+
+export %inline
 Scan List where
   scanChunk = scanListImpl [<]
+  escanChunk = escanListImpl [<]
 
 --------------------------------------------------------------------------------
 -- Zipping
